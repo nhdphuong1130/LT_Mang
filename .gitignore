@@ -1,0 +1,12 @@
+.worktrees/
+.superpowers/
+**/target/
+.idea/
+*.iml
+*.log
+server-data/
+agent-data/
+backup-storage/
+*.db
+*.db-shm
+*.db-wal
