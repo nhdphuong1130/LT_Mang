@@ -9,10 +9,12 @@ import vn.edu.ltm.server.session.SessionRegistry;
 import java.io.IOException;
 import java.net.Socket;
 import java.time.Clock;
+import java.util.Arrays;
 import java.util.function.BiConsumer;
 
 /** A socket cannot reach application dispatch until it owns an authenticated session. */
 public final class ControlClientHandler implements Runnable {
+    private static final System.Logger LOGGER = System.getLogger(ControlClientHandler.class.getName());
     private final Socket socket;
     private final DeviceProvisioningService provisioning;
     private final SessionRegistry sessions;
@@ -31,9 +33,11 @@ public final class ControlClientHandler implements Runnable {
 
     @Override public void run() {
         AgentSession session = null;
+        MessageType currentType = null;
         try (socket) {
             socket.setSoTimeout(5000);
             ControlEnvelope registration = codec.read(socket.getInputStream());
+            currentType = registration.type();
             if (registration.type() != MessageType.REGISTER) {
                 writeError(registration, "Registration required");
                 return;
@@ -52,6 +56,7 @@ public final class ControlClientHandler implements Runnable {
             socket.setSoTimeout(0);
             while (session.isOpen()) {
                 ControlEnvelope message = codec.read(socket.getInputStream());
+                currentType = message.type();
                 if (!session.deviceId().equals(message.deviceId())) {
                     sessions.send(session.deviceId(), error(session.deviceId(), message.requestId(), "Device does not match authenticated session"));
                     return;
@@ -67,9 +72,16 @@ public final class ControlClientHandler implements Runnable {
                     return;
                 }
             }
-        } catch (IOException | RuntimeException failure) {
-            // A peer disconnect, malformed frame, or failing application handler is isolated to this socket.
-            // Never log envelopes: REGISTER carries the plaintext provisioning token.
+        } catch (IOException failure) {
+            // Ordinary disconnects and malformed frames are isolated to this socket.
+        } catch (RuntimeException failure) {
+            // Exception messages, causes, and envelopes may contain plaintext credentials.
+            // Keep the exception type and stack locations for diagnosis without logging those values.
+            LOGGER.log(System.Logger.Level.ERROR,
+                    "Unexpected control handler failure [deviceId={0}, sessionId={1}, messageType={2}, exceptionType={3}, stack={4}]",
+                    session == null ? "<unregistered>" : session.deviceId(),
+                    session == null ? "<none>" : session.sessionId(), currentType,
+                    failure.getClass().getName(), Arrays.toString(failure.getStackTrace()));
         } finally {
             if (session != null) sessions.removeIfSame(session.deviceId(), session.sessionId());
         }

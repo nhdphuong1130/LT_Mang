@@ -9,21 +9,28 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /** Maintains one authenticated control connection; monitoring and file work run independently. */
 public final class ControlClient implements AutoCloseable {
     private final AgentConfig config;
+    private final Supplier<Socket> sockets;
     private final ReconnectPolicy reconnect = new ReconnectPolicy();
     private final LengthPrefixedJsonCodec codec = new LengthPrefixedJsonCodec();
     private final Object writeLock = new Object();
     private volatile Consumer<ControlEnvelope> inbound = message -> { };
-    private volatile Socket connection;
-    private volatile boolean registered;
+    private final AtomicReference<ConnectionState> connection = new AtomicReference<>();
     private volatile boolean closed;
     private Thread worker;
 
-    public ControlClient(AgentConfig config) { this.config = Objects.requireNonNull(config); }
+    public ControlClient(AgentConfig config) { this(config, Socket::new); }
+
+    ControlClient(AgentConfig config, Supplier<Socket> sockets) {
+        this.config = Objects.requireNonNull(config);
+        this.sockets = Objects.requireNonNull(sockets);
+    }
 
     public synchronized void start() {
         if (closed) throw new IllegalStateException("Client is closed");
@@ -32,18 +39,22 @@ public final class ControlClient implements AutoCloseable {
     }
 
     public void setInboundHandler(Consumer<ControlEnvelope> handler) { inbound = Objects.requireNonNull(handler); }
-    public boolean isRegistered() { return registered && !closed; }
+    public boolean isRegistered() {
+        ConnectionState state = connection.get();
+        return state != null && state.registered() && !closed;
+    }
 
     public void send(ControlEnvelope message) throws IOException {
         Objects.requireNonNull(message);
         if (!config.deviceId().equals(message.deviceId())) throw new IllegalArgumentException("Message has wrong device ID");
         synchronized (writeLock) {
-            Socket socket = connection;
-            if (!isRegistered() || socket == null || socket.isClosed()) throw new IOException("Control connection is offline");
-            try { codec.write(socket.getOutputStream(), message); }
+            ConnectionState state = connection.get();
+            if (closed || state == null || !state.registered() || state.socket().isClosed()) {
+                throw new IOException("Control connection is offline");
+            }
+            try { codec.write(state.socket().getOutputStream(), message); }
             catch (IOException failure) {
-                registered = false;
-                closeSocket(socket);
+                retire(state);
                 throw failure;
             }
         }
@@ -51,8 +62,10 @@ public final class ControlClient implements AutoCloseable {
 
     private void connectLoop() {
         while (!closed) {
-            try (var socket = new Socket()) {
-                connection = socket;
+            Socket socket = sockets.get();
+            ConnectionState state = new ConnectionState(socket, false);
+            connection.set(state);
+            try (socket) {
                 if (closed) return;
                 socket.connect(new InetSocketAddress(config.serverHost(), config.controlPort()), 5000);
                 socket.setSoTimeout(5000);
@@ -67,8 +80,10 @@ public final class ControlClient implements AutoCloseable {
                     throw new IOException("Registration rejected");
                 }
                 socket.setSoTimeout(0);
+                var authenticated = new ConnectionState(socket, true);
+                if (closed || !connection.compareAndSet(state, authenticated)) return;
+                state = authenticated;
                 reconnect.reset();
-                registered = true;
                 while (!closed) {
                     var message = codec.read(socket.getInputStream());
                     if (!config.deviceId().equals(message.deviceId())) throw new IOException("Inbound message has wrong device ID");
@@ -80,8 +95,7 @@ public final class ControlClient implements AutoCloseable {
             } catch (IOException failure) {
                 // Reconnect without logging REGISTER envelopes or credentials.
             } finally {
-                registered = false;
-                connection = null;
+                retire(state);
             }
             if (!closed) {
                 try { Thread.sleep(reconnect.nextDelay()); }
@@ -94,10 +108,10 @@ public final class ControlClient implements AutoCloseable {
         Thread currentWorker;
         synchronized (this) {
             closed = true;
-            registered = false;
             currentWorker = worker;
         }
-        closeSocket(connection);
+        ConnectionState state = connection.getAndSet(null);
+        if (state != null) closeSocket(state.socket());
         if (currentWorker != null) {
             currentWorker.interrupt();
             if (currentWorker != Thread.currentThread()) {
@@ -106,6 +120,14 @@ public final class ControlClient implements AutoCloseable {
             }
         }
     }
+
+    /** Delayed cleanup of an old generation must never unpublish a replacement connection. */
+    private void retire(ConnectionState state) {
+        connection.compareAndSet(state, null);
+        closeSocket(state.socket());
+    }
+
+    private record ConnectionState(Socket socket, boolean registered) { }
 
     private static void closeSocket(Socket socket) {
         if (socket != null) try { socket.close(); } catch (IOException ignored) { }

@@ -6,7 +6,12 @@ import vn.edu.ltm.agent.config.AgentConfig;
 import vn.edu.ltm.common.protocol.*;
 
 import java.net.ServerSocket;
+import java.net.Socket;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -118,6 +123,86 @@ class AgentControlRegistrationIntegrationTest {
                 client.setInboundHandler(inbound::add);
                 client.start();
                 assertNotNull(inbound.poll(5, TimeUnit.SECONDS));
+            }
+            peer.get(3, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test void staleSendFailureCannotRetireAnAuthenticatedReplacement() throws Exception {
+        var failOldWrites = new AtomicBoolean();
+        var failedSendStarted = new CountDownLatch(1);
+        var releaseFailedSend = new CountDownLatch(1);
+        try (var listener = new ServerSocket(0); var executor = Executors.newVirtualThreadPerTaskExecutor();
+             var oldSocket = new Socket() {
+                 @Override public OutputStream getOutputStream() throws IOException {
+                     OutputStream output = super.getOutputStream();
+                     return new OutputStream() {
+                         @Override public void write(int value) throws IOException {
+                             delayFailureIfRequested();
+                             output.write(value);
+                         }
+                         @Override public void write(byte[] bytes, int offset, int length) throws IOException {
+                             delayFailureIfRequested();
+                             output.write(bytes, offset, length);
+                         }
+                         private void delayFailureIfRequested() throws IOException {
+                             if (!failOldWrites.get()) return;
+                             failedSendStarted.countDown();
+                             try {
+                                 if (!releaseFailedSend.await(8, TimeUnit.SECONDS)) throw new IOException("Test write gate timed out");
+                             } catch (InterruptedException interrupted) {
+                                 Thread.currentThread().interrupt();
+                                 throw new IOException(interrupted);
+                             }
+                             throw new IOException("Retired socket write failed");
+                         }
+                     };
+                 }
+             }) {
+            listener.setSoTimeout(6000);
+            var inbound = new LinkedBlockingQueue<ControlEnvelope>();
+            var healthyHeartbeat = new CountDownLatch(1);
+            var peer = executor.submit(() -> {
+                try (var first = listener.accept()) {
+                    first.setSoTimeout(3000);
+                    var registration = codec.read(first.getInputStream());
+                    codec.write(first.getOutputStream(), ack(registration.requestId(), true));
+                    codec.write(first.getOutputStream(), new ControlEnvelope(MessageType.RESTORE_AVAILABLE, "first", "lab-1",
+                            JsonNodeFactory.instance.objectNode()));
+                    assertTrue(failedSendStarted.await(3, TimeUnit.SECONDS));
+                }
+                try (var second = listener.accept()) {
+                    second.setSoTimeout(3000);
+                    var registration = codec.read(second.getInputStream());
+                    codec.write(second.getOutputStream(), ack(registration.requestId(), true));
+                    codec.write(second.getOutputStream(), new ControlEnvelope(MessageType.RESTORE_AVAILABLE, "replacement", "lab-1",
+                            JsonNodeFactory.instance.objectNode()));
+                    assertEquals(MessageType.HEARTBEAT, codec.read(second.getInputStream()).type());
+                    healthyHeartbeat.countDown();
+                    assertEquals(-1, second.getInputStream().read());
+                }
+                return null;
+            });
+            var socketsCreated = new AtomicInteger();
+            try (var client = new ControlClient(new AgentConfig("127.0.0.1", listener.getLocalPort(), "lab-1", "secret"),
+                    () -> socketsCreated.getAndIncrement() == 0 ? oldSocket : new Socket())) {
+                client.setInboundHandler(inbound::add);
+                client.start();
+                assertEquals("first", inbound.poll(3, TimeUnit.SECONDS).requestId());
+                failOldWrites.set(true);
+                var oldSend = executor.submit(() -> assertThrows(IOException.class, () -> client.send(heartbeat())));
+                try {
+                    assertTrue(failedSendStarted.await(3, TimeUnit.SECONDS));
+                    assertEquals("replacement", inbound.poll(5, TimeUnit.SECONDS).requestId());
+                    assertTrue(client.isRegistered());
+                    releaseFailedSend.countDown();
+                    oldSend.get(3, TimeUnit.SECONDS);
+                    assertTrue(client.isRegistered(), "An old socket failure must not clear replacement registration");
+                    client.send(heartbeat());
+                    assertTrue(healthyHeartbeat.await(3, TimeUnit.SECONDS));
+                } finally {
+                    releaseFailedSend.countDown();
+                }
             }
             peer.get(3, TimeUnit.SECONDS);
         }

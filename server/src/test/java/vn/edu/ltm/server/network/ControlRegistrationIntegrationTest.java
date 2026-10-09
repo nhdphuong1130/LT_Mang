@@ -18,6 +18,11 @@ import java.time.ZoneOffset;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
+import java.util.logging.SimpleFormatter;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -92,6 +97,66 @@ class ControlRegistrationIntegrationTest {
                 writeRegister(peer, "lab-1", issued.token());
                 assertTrue(codec.read(peer.getInputStream()).payload().path("accepted").asBoolean());
             }
+        }
+    }
+
+    @Test void unexpectedHandlerFailureLogsSafeDiagnosticAndIsolatesOnlyFailingPeer() throws Exception {
+        var database = new Database(temp.resolve("server.db"));
+        database.initialize();
+        var devices = new JdbcDeviceRepository(database);
+        var provisioning = new DeviceProvisioningService(devices);
+        var failing = provisioning.provision("lab-1", "One", "Linux");
+        var healthy = provisioning.provision("lab-2", "Two", "Linux");
+        var diagnostics = new LinkedBlockingQueue<LogRecord>();
+        var received = new LinkedBlockingQueue<ControlEnvelope>();
+        Logger logger = Logger.getLogger(ControlClientHandler.class.getName());
+        Level previousLevel = logger.getLevel();
+        boolean previousParentHandlers = logger.getUseParentHandlers();
+        var capture = new Handler() {
+            @Override public void publish(LogRecord record) { diagnostics.add(record); }
+            @Override public void flush() { }
+            @Override public void close() { }
+        };
+        capture.setLevel(Level.ALL);
+        logger.setLevel(Level.ALL);
+        logger.setUseParentHandlers(false);
+        logger.addHandler(capture);
+        try (var registry = new SessionRegistry(devices);
+             var server = new ControlTcpServer(new ServerConfig("127.0.0.1", 0), provisioning, registry,
+                     Clock.systemUTC(), (deviceId, message) -> {
+                         if (deviceId.equals("lab-1")) throw new IllegalStateException("Credentials " + failing.token() + ": " + message);
+                         received.add(message);
+                     })) {
+            server.start();
+            try (var badPeer = connect(server.port()); var healthyPeer = connect(server.port())) {
+                writeRegister(badPeer, failing.deviceId(), failing.token());
+                assertTrue(codec.read(badPeer.getInputStream()).payload().path("accepted").asBoolean());
+                writeRegister(healthyPeer, healthy.deviceId(), healthy.token());
+                assertTrue(codec.read(healthyPeer.getInputStream()).payload().path("accepted").asBoolean());
+                codec.write(badPeer.getOutputStream(), new ControlEnvelope(MessageType.METRICS, "secret-request", "lab-1",
+                        JsonNodeFactory.instance.objectNode().put("token", failing.token()).put("detail", "private-payload")));
+                assertEquals(-1, badPeer.getInputStream().read());
+                LogRecord record = diagnostics.poll(3, TimeUnit.SECONDS);
+                assertNotNull(record, "Unexpected runtime failures must emit diagnostic evidence");
+                assertEquals(Level.SEVERE, record.getLevel());
+                String diagnostic = new SimpleFormatter().format(record);
+                assertTrue(diagnostic.contains("IllegalStateException"));
+                assertTrue(diagnostic.contains("lab-1"));
+                assertTrue(diagnostic.contains("METRICS"));
+                assertTrue(diagnostic.contains("ControlRegistrationIntegrationTest"), "Include safe stack locations for diagnosis");
+                assertFalse(diagnostic.contains(failing.token()));
+                assertFalse(diagnostic.contains("private-payload"));
+                assertFalse(diagnostic.contains("secret-request"));
+                assertNull(record.getThrown(), "Raw throwables may contain plaintext credentials in their messages/causes");
+                codec.write(healthyPeer.getOutputStream(), new ControlEnvelope(MessageType.METRICS, "healthy", "lab-2",
+                        JsonNodeFactory.instance.objectNode()));
+                assertEquals("healthy", received.poll(3, TimeUnit.SECONDS).requestId());
+                assertEquals(Device.Status.ONLINE, devices.findById("lab-2").orElseThrow().status());
+            }
+        } finally {
+            logger.removeHandler(capture);
+            logger.setLevel(previousLevel);
+            logger.setUseParentHandlers(previousParentHandlers);
         }
     }
 
