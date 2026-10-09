@@ -430,6 +430,7 @@ Run: `git add agent server && git commit -m "feat: restore backups through admin
 - Create: `agent/src/main/java/vn/edu/ltm/agent/ui/AgentApp.java`
 - Create: `agent/src/main/java/vn/edu/ltm/agent/ui/AgentViewModel.java`
 - Create: `agent/src/main/java/vn/edu/ltm/agent/ui/AgentController.java`
+- Create: `agent/src/main/java/vn/edu/ltm/agent/alert/ConnectionStatusNotifier.java`
 - Create: `agent/src/main/resources/vn/edu/ltm/agent/ui/agent.fxml`
 - Create: `agent/src/main/resources/vn/edu/ltm/agent/ui/agent.css`
 - Create: `server/src/main/java/vn/edu/ltm/server/ServerMain.java`
@@ -441,17 +442,19 @@ Run: `git add agent server && git commit -m "feat: restore backups through admin
 - Create: `server/src/main/resources/vn/edu/ltm/server/ui/dashboard.fxml`
 - Create: `server/src/main/resources/vn/edu/ltm/server/ui/dashboard.css`
 - Test: `agent/src/test/java/vn/edu/ltm/agent/ui/AgentViewModelTest.java`
+- Test: `agent/src/test/java/vn/edu/ltm/agent/alert/ConnectionStatusNotifierTest.java`
 - Test: `server/src/test/java/vn/edu/ltm/server/ui/DashboardViewModelTest.java`
 - Test: `server/src/test/java/vn/edu/ltm/server/ui/LoginControllerTest.java`
 
 **Interfaces:**
 - Consumes: all application services from Tasks 2–6.
 - Produces: Agent setup/status UI for Server address, device ID/token, protected folder, connection status, latest metrics, queue status, and local alerts.
+- Produces: `ConnectionStatusNotifier` that observes `ControlClient.isRegistered()`, emits one local “Server mất liên lạc” warning per disconnected episode, and rearms only after a successful reconnect.
 - Produces: Server login/dashboard UI for device status, latest metrics, incidents, backup versions, provisioning, and restore actions.
 
 - [ ] **Step 1: Write failing view-model/controller tests**
 
-Assert UI state maps `null` temperature to `N/A`, distinguishes Online/Offline/warning states, disables restore without an authenticated admin and selected version, does not expose device tokens after provisioning, and routes background updates through a UI executor abstraction.
+Assert UI state maps `null` temperature to `N/A`, distinguishes Online/Offline/warning states, disables restore without an authenticated admin and selected version, does not expose device tokens after provisioning, and routes background updates through a UI executor abstraction. Assert connection loss emits one local warning, repeated disconnected polls do not spam, and a reconnect rearms the next warning.
 
 - [ ] **Step 2: Run UI unit tests and verify they fail**
 
