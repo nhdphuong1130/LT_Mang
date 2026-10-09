@@ -110,9 +110,9 @@ Run: `./mvnw -pl common test`
 
 Expected: all common tests PASS.
 
-- [ ] **Step 7: Initialize version control and commit**
+- [ ] **Step 7: Commit the task**
 
-Run: `git init && git add .gitignore .mvn mvnw mvnw.cmd pom.xml common agent server docs/superpowers && git commit -m "build: initialize Java monitoring project"`
+Run: `git add .gitignore .mvn mvnw mvnw.cmd pom.xml common agent server docs/superpowers && git commit -m "build: initialize Java monitoring project"`
 
 ### Task 2: Server Persistence, Device Provisioning, and Control Sessions
 
@@ -141,7 +141,7 @@ Run: `git init && git add .gitignore .mvn mvnw mvnw.cmd pom.xml common agent ser
 **Interfaces:**
 - Consumes: `ControlEnvelope`, `LengthPrefixedJsonCodec` from Task 1.
 - Produces: `DeviceProvisioningService.provision(String deviceId, String displayName, String platform): ProvisionedDevice`; plaintext token is returned once and only its BCrypt hash is stored.
-- Produces: `SessionRegistry.register(String deviceId, Socket socket): RegistrationResult`, `touch(String deviceId, Instant now)`, and `removeIfSame(String deviceId, UUID sessionId)`.
+- Produces: `SessionRegistry.register(String deviceId, Socket socket): RegistrationResult`, `touch(String deviceId, Instant now)`, `send(String deviceId, ControlEnvelope message): boolean`, and `removeIfSame(String deviceId, UUID sessionId)`.
 - Produces: `ControlClient.start()`, `send(ControlEnvelope)`, `setInboundHandler(Consumer<ControlEnvelope>)`, and `close()`.
 
 - [ ] **Step 1: Write failing database and provisioning tests**
@@ -375,6 +375,7 @@ Run: `git add common agent server && git commit -m "feat: upload and version pro
 - Create: `server/src/main/java/vn/edu/ltm/server/restore/JdbcRestoreJobRepository.java`
 - Create: `server/src/main/java/vn/edu/ltm/server/restore/RestoreService.java`
 - Create: `server/src/main/java/vn/edu/ltm/server/network/FileRestoreHandler.java`
+- Modify: `server/src/main/java/vn/edu/ltm/server/network/FileTransferServer.java`
 - Create: `agent/src/main/java/vn/edu/ltm/agent/restore/RestorePathResolver.java`
 - Create: `agent/src/main/java/vn/edu/ltm/agent/restore/RestoreHandler.java`
 - Test: `server/src/test/java/vn/edu/ltm/server/auth/AdminAuthServiceTest.java`
