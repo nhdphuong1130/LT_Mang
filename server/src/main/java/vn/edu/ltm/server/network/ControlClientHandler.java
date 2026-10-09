@@ -1,0 +1,96 @@
+package vn.edu.ltm.server.network;
+
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import vn.edu.ltm.common.protocol.*;
+import vn.edu.ltm.server.device.DeviceProvisioningService;
+import vn.edu.ltm.server.session.AgentSession;
+import vn.edu.ltm.server.session.SessionRegistry;
+
+import java.io.IOException;
+import java.net.Socket;
+import java.time.Clock;
+import java.util.function.BiConsumer;
+
+/** A socket cannot reach application dispatch until it owns an authenticated session. */
+public final class ControlClientHandler implements Runnable {
+    private final Socket socket;
+    private final DeviceProvisioningService provisioning;
+    private final SessionRegistry sessions;
+    private final Clock clock;
+    private final BiConsumer<String, ControlEnvelope> inbound;
+    private final LengthPrefixedJsonCodec codec = new LengthPrefixedJsonCodec();
+
+    public ControlClientHandler(Socket socket, DeviceProvisioningService provisioning, SessionRegistry sessions,
+                                Clock clock, BiConsumer<String, ControlEnvelope> inbound) {
+        this.socket = socket;
+        this.provisioning = provisioning;
+        this.sessions = sessions;
+        this.clock = clock;
+        this.inbound = inbound;
+    }
+
+    @Override public void run() {
+        AgentSession session = null;
+        try (socket) {
+            socket.setSoTimeout(5000);
+            ControlEnvelope registration = codec.read(socket.getInputStream());
+            if (registration.type() != MessageType.REGISTER) {
+                writeError(registration, "Registration required");
+                return;
+            }
+            var token = registration.payload().path("token");
+            if (!token.isTextual() || !provisioning.authenticate(registration.deviceId(), token.asText())) {
+                writeAck(registration, false, "Invalid credentials");
+                return;
+            }
+            var result = sessions.registerWithAcknowledgement(registration.deviceId(), socket, ack(registration, true, null));
+            if (!result.accepted()) {
+                writeAck(registration, false, result.reason());
+                return;
+            }
+            session = result.session();
+            socket.setSoTimeout(0);
+            while (session.isOpen()) {
+                ControlEnvelope message = codec.read(socket.getInputStream());
+                if (!session.deviceId().equals(message.deviceId())) {
+                    sessions.send(session.deviceId(), error(session.deviceId(), message.requestId(), "Device does not match authenticated session"));
+                    return;
+                }
+                if (message.type() == MessageType.HEARTBEAT) {
+                    sessions.touch(session.deviceId(), clock.instant());
+                } else if (message.type() == MessageType.METRICS || message.type() == MessageType.RISK_ALERT
+                        || message.type() == MessageType.RISK_RESOLVED || message.type() == MessageType.RESTORE_RESULT
+                        || message.type() == MessageType.ERROR) {
+                    inbound.accept(session.deviceId(), message);
+                } else {
+                    sessions.send(session.deviceId(), error(session.deviceId(), message.requestId(), "Unexpected message type"));
+                    return;
+                }
+            }
+        } catch (IOException | RuntimeException failure) {
+            // A peer disconnect, malformed frame, or failing application handler is isolated to this socket.
+            // Never log envelopes: REGISTER carries the plaintext provisioning token.
+        } finally {
+            if (session != null) sessions.removeIfSame(session.deviceId(), session.sessionId());
+        }
+    }
+
+    private void writeAck(ControlEnvelope request, boolean accepted, String reason) throws IOException {
+        codec.write(socket.getOutputStream(), ack(request, accepted, reason));
+    }
+
+    private static ControlEnvelope ack(ControlEnvelope request, boolean accepted, String reason) {
+        var payload = JsonNodeFactory.instance.objectNode().put("accepted", accepted);
+        if (reason != null) payload.put("reason", reason);
+        return new ControlEnvelope(MessageType.REGISTER_ACK, request.requestId(), request.deviceId(), payload);
+    }
+
+    private void writeError(ControlEnvelope request, String reason) throws IOException {
+        codec.write(socket.getOutputStream(), error(request.deviceId(), request.requestId(), reason));
+    }
+
+    private static ControlEnvelope error(String deviceId, String requestId, String reason) {
+        return new ControlEnvelope(MessageType.ERROR, requestId, deviceId,
+                JsonNodeFactory.instance.objectNode().put("reason", reason));
+    }
+}
