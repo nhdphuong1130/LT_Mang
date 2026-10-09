@@ -10,6 +10,10 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 
 /** Encodes UTF-8 JSON with a four-byte big-endian byte length. Caller owns streams. */
 public final class LengthPrefixedJsonCodec {
@@ -46,11 +50,17 @@ public final class LengthPrefixedJsonCodec {
             throw new ProtocolException("Truncated frame payload");
         }
         try {
-            ControlEnvelope envelope = mapper.readValue(payload, ControlEnvelope.class);
+            String json = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(payload)).toString();
+            ControlEnvelope envelope = mapper.readValue(json, ControlEnvelope.class);
             if (envelope == null) {
                 throw new ProtocolException("Control envelope must not be null");
             }
             return envelope;
+        } catch (CharacterCodingException exception) {
+            throw new ProtocolException("Control payload must be valid UTF-8", exception);
         } catch (JsonProcessingException exception) {
             throw new ProtocolException("Invalid control envelope JSON", exception);
         }

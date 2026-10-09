@@ -10,6 +10,7 @@ import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -116,6 +117,24 @@ class LengthPrefixedJsonCodecTest {
     @Test
     void rejectsMalformedJson() throws Exception {
         assertThrows(ProtocolException.class, () -> codec.read(new ByteArrayInputStream(frame("{"))));
+    }
+
+    @Test
+    void rejectsUtf16LeFrameInsteadOfAutodetectingEncoding() {
+        byte[] payload = json("hello").getBytes(StandardCharsets.UTF_16LE);
+        byte[] frame = ByteBuffer.allocate(4 + payload.length).putInt(payload.length).put(payload).array();
+
+        assertThrows(ProtocolException.class, () -> codec.read(new ByteArrayInputStream(frame)));
+    }
+
+    @Test
+    void rejectsMalformedUtf8InsteadOfReplacingInvalidBytes() {
+        byte[] payload = json("x").getBytes(StandardCharsets.UTF_8);
+        payload[payload.length - 3] = (byte) 0x80;
+        byte[] frame = ByteBuffer.allocate(4 + payload.length).putInt(payload.length).put(payload).array();
+
+        var exception = assertThrows(ProtocolException.class, () -> codec.read(new ByteArrayInputStream(frame)));
+        assertInstanceOf(CharacterCodingException.class, exception.getCause());
     }
 
     @Test
