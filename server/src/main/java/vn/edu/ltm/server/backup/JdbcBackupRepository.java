@@ -75,7 +75,15 @@ public final class JdbcBackupRepository implements BackupRepository {
                         delete.setLong(1, version.id());
                         delete.executeUpdate();
                     }
-                    removed.add(version.storagePath());
+                    try (var active = connection.prepareStatement("""
+                            SELECT 1 FROM restore_jobs WHERE storage_path = ?
+                            AND status IN ('PENDING', 'AVAILABLE', 'IN_PROGRESS') LIMIT 1
+                            """)) {
+                        active.setString(1, version.storagePath().toString());
+                        try (var rows = active.executeQuery()) {
+                            if (!rows.next()) removed.add(version.storagePath());
+                        }
+                    }
                 }
                 statement.execute("COMMIT");
                 return List.copyOf(removed);

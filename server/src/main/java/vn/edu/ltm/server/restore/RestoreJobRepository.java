@@ -11,12 +11,14 @@ public interface RestoreJobRepository {
     record BackupMetadata(long versionId, String deviceId, String relativePath, long size, String sha256, Path storagePath) { }
     Optional<BackupMetadata> backup(long versionId) throws SQLException;
     void create(RestoreJob job) throws SQLException;
+    BackupMetadata metadata(UUID jobId) throws SQLException;
     Optional<RestoreJob> find(UUID id) throws SQLException;
-    List<RestoreJob> pending(String deviceId) throws SQLException;
-    void requeueExpired(String deviceId, Instant now) throws SQLException;
+    List<RestoreJob> offerable(String deviceId) throws SQLException;
+    void recoverInProgress(String leaseOwner, Instant now) throws SQLException;
     boolean offer(UUID id, String tokenHash, Instant expiresAt) throws SQLException;
     void revertOffer(UUID id) throws SQLException;
-    Optional<RestoreJob> claim(String tokenHash, String deviceId, Instant now) throws SQLException;
+    Optional<RestoreJob> claim(String tokenHash, String deviceId, String leaseOwner, Instant now) throws SQLException;
     void complete(UUID id, boolean success, Instant now, String error) throws SQLException;
     void audit(Instant at, String actor, String action, String deviceId, String details) throws SQLException;
+    List<Path> orphanedBlobs() throws SQLException;
 }

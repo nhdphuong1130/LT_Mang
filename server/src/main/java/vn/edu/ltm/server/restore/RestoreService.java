@@ -8,6 +8,8 @@ import vn.edu.ltm.server.auth.AdminAuthService;
 import vn.edu.ltm.server.session.SessionRegistry;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
@@ -26,12 +28,17 @@ public final class RestoreService {
     private final SessionRegistry sessions;
     private final Clock clock;
     private final SecureRandom random = new SecureRandom();
+    private final String leaseOwner = UUID.randomUUID().toString();
 
     public RestoreService(RestoreJobRepository jobs, AdminAuthService auth, SessionRegistry sessions, Clock clock) {
         this.jobs = Objects.requireNonNull(jobs);
         this.auth = Objects.requireNonNull(auth);
         this.sessions = Objects.requireNonNull(sessions);
         this.clock = Objects.requireNonNull(clock);
+        try {
+            jobs.recoverInProgress(leaseOwner, clock.instant());
+            cleanupOrphanedBlobs();
+        } catch (SQLException failure) { throw new IllegalStateException("Cannot recover restore jobs", failure); }
         sessions.setOnRegistered(deviceId -> {
             try { notifyPending(deviceId); }
             catch (SQLException failure) {
@@ -56,10 +63,9 @@ public final class RestoreService {
 
     public int notifyPending(String deviceId) throws SQLException {
         if (sessions.find(deviceId).isEmpty()) return 0;
-        jobs.requeueExpired(deviceId, clock.instant());
         int sent = 0;
-        for (var job : jobs.pending(deviceId)) {
-            var backup = jobs.backup(job.backupVersionId()).orElseThrow();
+        for (var job : jobs.offerable(deviceId)) {
+            var backup = jobs.metadata(job.id());
             byte[] bytes = new byte[32];
             random.nextBytes(bytes);
             String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
@@ -71,7 +77,10 @@ public final class RestoreService {
                     .put("size", backup.size()).put("sha256", backup.sha256())
                     .put("requestedAt", job.requestedAt().toString());
             var notification = new ControlEnvelope(MessageType.RESTORE_AVAILABLE, job.id().toString(), deviceId, payload);
-            if (sessions.send(deviceId, notification)) sent++;
+            if (sessions.send(deviceId, notification)) {
+                jobs.audit(clock.instant(), "server", "RESTORE_OFFER", deviceId, "job=" + job.id());
+                sent++;
+            }
             else jobs.revertOffer(job.id());
         }
         return sent;
@@ -80,10 +89,10 @@ public final class RestoreService {
     public ClaimedRestore claim(String oneTimeToken, String deviceId) throws SQLException {
         if (oneTimeToken == null || !oneTimeToken.matches("[A-Za-z0-9_-]{43}") || deviceId == null)
             throw new SecurityException("Invalid restore token");
-        var job = jobs.claim(hash(oneTimeToken), deviceId, clock.instant())
+        var job = jobs.claim(hash(oneTimeToken), deviceId, leaseOwner, clock.instant())
                 .orElseThrow(() -> new SecurityException("Restore token unavailable"));
         jobs.audit(clock.instant(), deviceId, "RESTORE_CLAIM", deviceId, "job=" + job.id());
-        var backup = jobs.backup(job.backupVersionId()).orElseThrow();
+        var backup = jobs.metadata(job.id());
         return new ClaimedRestore(job.id(), backup.versionId(), backup.relativePath(), backup.size(),
                 backup.sha256(), backup.storagePath());
     }
@@ -95,9 +104,20 @@ public final class RestoreService {
         jobs.complete(jobId, success, clock.instant(), error);
         jobs.audit(clock.instant(), job.deviceId(), success ? "RESTORE_COMPLETE" : "RESTORE_FAILURE",
                 job.deviceId(), "job=" + jobId + (error == null ? "" : ", reason=" + error));
+        cleanupOrphanedBlobs();
     }
 
     public Optional<RestoreJob> find(UUID jobId) throws SQLException { return jobs.find(jobId); }
+
+    private void cleanupOrphanedBlobs() throws SQLException {
+        for (var path : jobs.orphanedBlobs()) {
+            try { Files.deleteIfExists(path); }
+            catch (IOException failure) {
+                System.getLogger(RestoreService.class.getName()).log(System.Logger.Level.WARNING,
+                        "Could not remove expired restore blob", failure);
+            }
+        }
+    }
 
     private static String hash(String token) {
         try {

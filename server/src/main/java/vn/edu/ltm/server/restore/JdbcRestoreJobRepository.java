@@ -31,16 +31,34 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
 
     @Override public void create(RestoreJob job) throws SQLException {
         try (var connection = database.openConnection(); var insert = connection.prepareStatement("""
-                INSERT INTO restore_jobs(id, backup_version_id, device_id, admin_username, token_hash,
-                    expires_at, status, requested_at) VALUES (?, ?, ?, ?, '', ?, 'PENDING', ?)
+                INSERT INTO restore_jobs(id, backup_version_id, device_id, admin_username, relative_path,
+                    size_bytes, sha256, storage_path, token_hash, expires_at, status, requested_at)
+                SELECT ?, v.id, f.device_id, ?, f.relative_path, v.size_bytes, v.sha256, v.storage_path,
+                    '', ?, 'PENDING', ?
+                FROM backup_versions v JOIN backup_files f ON f.id = v.file_id
+                WHERE v.id = ? AND f.device_id = ?
                 """)) {
             insert.setString(1, job.id().toString());
-            insert.setLong(2, job.backupVersionId());
-            insert.setString(3, job.deviceId());
-            insert.setString(4, job.adminUsername());
-            insert.setString(5, job.expiresAt().toString());
-            insert.setString(6, job.requestedAt().toString());
-            insert.executeUpdate();
+            insert.setString(2, job.adminUsername());
+            insert.setString(3, job.expiresAt().toString());
+            insert.setString(4, job.requestedAt().toString());
+            insert.setLong(5, job.backupVersionId());
+            insert.setString(6, job.deviceId());
+            if (insert.executeUpdate() != 1) throw new IllegalArgumentException("Backup version is no longer available");
+        }
+    }
+
+    @Override public BackupMetadata metadata(UUID jobId) throws SQLException {
+        try (var connection = database.openConnection(); var query = connection.prepareStatement("""
+                SELECT backup_version_id, device_id, relative_path, size_bytes, sha256, storage_path
+                FROM restore_jobs WHERE id = ?
+                """)) {
+            query.setString(1, jobId.toString());
+            try (var rows = query.executeQuery()) {
+                if (!rows.next()) throw new IllegalArgumentException("Restore job does not exist");
+                return new BackupMetadata(rows.getLong(1), rows.getString(2), rows.getString(3),
+                        rows.getLong(4), rows.getString(5), Path.of(rows.getString(6)));
+            }
         }
     }
 
@@ -51,31 +69,50 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
         }
     }
 
-    @Override public List<RestoreJob> pending(String deviceId) throws SQLException {
+    @Override public List<RestoreJob> offerable(String deviceId) throws SQLException {
         var jobs = new ArrayList<RestoreJob>();
         try (var connection = database.openConnection(); var query = connection.prepareStatement(
-                "SELECT * FROM restore_jobs WHERE device_id = ? AND status = 'PENDING' ORDER BY requested_at, id")) {
+                "SELECT * FROM restore_jobs WHERE device_id = ? AND status IN ('PENDING', 'AVAILABLE') ORDER BY requested_at, id")) {
             query.setString(1, deviceId);
             try (var rows = query.executeQuery()) { while (rows.next()) jobs.add(read(rows)); }
         }
         return List.copyOf(jobs);
     }
 
-    @Override public void requeueExpired(String deviceId, Instant now) throws SQLException {
-        try (var connection = database.openConnection(); var update = connection.prepareStatement("""
-                UPDATE restore_jobs SET status = 'PENDING', token_hash = ''
-                WHERE device_id = ? AND status = 'AVAILABLE' AND expires_at <= ?
-                """)) {
-            update.setString(1, deviceId);
-            update.setString(2, now.toString());
-            update.executeUpdate();
+    @Override public void recoverInProgress(String leaseOwner, Instant now) throws SQLException {
+        try (var connection = database.openConnection()) {
+            connection.setAutoCommit(false);
+            try (var update = connection.prepareStatement("""
+                    UPDATE restore_jobs SET status = 'PENDING', token_hash = '', lease_owner = NULL
+                    WHERE status = 'IN_PROGRESS' AND lease_owner IS NOT ? RETURNING id, device_id
+                    """)) {
+                update.setString(1, leaseOwner);
+                try (var rows = update.executeQuery(); var audit = connection.prepareStatement("""
+                        INSERT INTO audit_logs(occurred_at, actor, action, device_id, details) VALUES (?, ?, ?, ?, ?)
+                        """)) {
+                    while (rows.next()) {
+                        String id = rows.getString(1);
+                        String deviceId = rows.getString(2);
+                        audit.setString(1, now.toString());
+                        audit.setString(2, "server");
+                        audit.setString(3, "RESTORE_RECOVERED");
+                        audit.setString(4, deviceId);
+                        audit.setString(5, "job=" + id);
+                        audit.executeUpdate();
+                    }
+                }
+                connection.commit();
+            } catch (SQLException failure) {
+                connection.rollback();
+                throw failure;
+            }
         }
     }
 
     @Override public boolean offer(UUID id, String tokenHash, Instant expiresAt) throws SQLException {
         try (var connection = database.openConnection(); var update = connection.prepareStatement("""
                 UPDATE restore_jobs SET status = 'AVAILABLE', token_hash = ?, expires_at = ?
-                WHERE id = ? AND status = 'PENDING'
+                WHERE id = ? AND status IN ('PENDING', 'AVAILABLE')
                 """)) {
             update.setString(1, tokenHash);
             update.setString(2, expiresAt.toString());
@@ -93,17 +130,18 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
         }
     }
 
-    @Override public Optional<RestoreJob> claim(String tokenHash, String deviceId, Instant now) throws SQLException {
+    @Override public Optional<RestoreJob> claim(String tokenHash, String deviceId, String leaseOwner, Instant now) throws SQLException {
         try (var connection = database.openConnection()) {
             connection.setAutoCommit(false);
             try (var update = connection.prepareStatement("""
-                    UPDATE restore_jobs SET status = 'IN_PROGRESS', token_hash = ''
+                    UPDATE restore_jobs SET status = 'IN_PROGRESS', token_hash = '', lease_owner = ?
                     WHERE token_hash = ? AND device_id = ? AND status = 'AVAILABLE' AND expires_at > ?
                     RETURNING *
                     """)) {
-                update.setString(1, tokenHash);
-                update.setString(2, deviceId);
-                update.setString(3, now.toString());
+                update.setString(1, leaseOwner);
+                update.setString(2, tokenHash);
+                update.setString(3, deviceId);
+                update.setString(4, now.toString());
                 RestoreJob result;
                 try (var rows = update.executeQuery()) { result = rows.next() ? read(rows) : null; }
                 connection.commit();
@@ -117,7 +155,8 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
 
     @Override public void complete(UUID id, boolean success, Instant now, String error) throws SQLException {
         try (var connection = database.openConnection(); var update = connection.prepareStatement("""
-                UPDATE restore_jobs SET status = ?, completed_at = ?, error = ? WHERE id = ? AND status = 'IN_PROGRESS'
+                UPDATE restore_jobs SET status = ?, completed_at = ?, error = ?, lease_owner = NULL
+                WHERE id = ? AND status = 'IN_PROGRESS'
                 """)) {
             update.setString(1, success ? "COMPLETED" : "FAILED");
             update.setString(2, now.toString());
@@ -138,6 +177,22 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
             insert.setString(5, details);
             insert.executeUpdate();
         }
+    }
+
+    @Override public List<Path> orphanedBlobs() throws SQLException {
+        var paths = new ArrayList<Path>();
+        try (var connection = database.openConnection(); var statement = connection.createStatement();
+             var rows = statement.executeQuery("""
+                     SELECT DISTINCT j.storage_path FROM restore_jobs j
+                     WHERE j.status IN ('COMPLETED', 'FAILED')
+                       AND NOT EXISTS (SELECT 1 FROM backup_versions v WHERE v.storage_path = j.storage_path)
+                       AND NOT EXISTS (SELECT 1 FROM restore_jobs active
+                           WHERE active.storage_path = j.storage_path
+                           AND active.status IN ('PENDING', 'AVAILABLE', 'IN_PROGRESS'))
+                     """)) {
+            while (rows.next()) paths.add(Path.of(rows.getString(1)));
+        }
+        return List.copyOf(paths);
     }
 
     private static RestoreJob read(ResultSet rows) throws SQLException {

@@ -21,6 +21,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import vn.edu.ltm.common.transfer.*;
 
@@ -110,6 +113,67 @@ class RestoreIntegrationTest {
             assertEquals(TransferResult.Status.REJECTED, result.get().status());
             try (var files = Files.walk(protectedRoot)) {
                 assertTrue(files.noneMatch(path -> Files.isRegularFile(path)));
+            }
+        }
+    }
+
+    @Test void swappedRecoveredDirectoryCannotRedirectPayloadOutsideProtected() throws Exception {
+        Fixture fixture = fixture();
+        Path protectedRoot = root.resolve("Protected");
+        Files.createDirectories(protectedRoot);
+        Instant requestedAt = Instant.parse("2026-10-10T00:00:00Z");
+        Path timestamp = protectedRoot.resolve("Recovered/20261010T000000Z");
+        Path outside = root.resolve("outside");
+        var headerRead = new CountDownLatch(1);
+        var sendPayload = new CountDownLatch(1);
+        var firstByteSent = new CountDownLatch(1);
+        var finishPayload = new CountDownLatch(1);
+        try (var listener = new ServerSocket(0)) {
+            Thread sender = Thread.ofVirtual().start(() -> {
+                try (var socket = listener.accept()) {
+                    var codec = new FileTransferCodec();
+                    codec.readHeader(socket.getInputStream());
+                    headerRead.countDown();
+                    if (!sendPayload.await(3, TimeUnit.SECONDS)) throw new IOException("Test timed out");
+                    codec.writeResult(socket.getOutputStream(), new TransferResult(TransferResult.Status.READY, "payload"));
+                    byte[] bytes = Files.readAllBytes(fixture.blob());
+                    socket.getOutputStream().write(bytes[0]);
+                    socket.getOutputStream().flush();
+                    firstByteSent.countDown();
+                    if (!finishPayload.await(3, TimeUnit.SECONDS)) throw new IOException("Test timed out");
+                    try { socket.getOutputStream().write(bytes, 1, bytes.length - 1); }
+                    catch (IOException disconnected) { /* Rejection can close the socket before remaining bytes. */ }
+                } catch (Exception failure) { throw new RuntimeException(failure); }
+            });
+            var payload = JsonNodeFactory.instance.objectNode()
+                    .put("token", "B".repeat(43)).put("relativePath", "report.txt")
+                    .put("sha256", Hashing.sha256(fixture.blob())).put("size", Files.size(fixture.blob()))
+                    .put("versionId", fixture.versionId()).put("requestedAt", requestedAt.toString());
+            var offer = new ControlEnvelope(MessageType.RESTORE_AVAILABLE, UUID.randomUUID().toString(), "device", payload);
+            var result = CompletableFuture.supplyAsync(() -> {
+                try { return new RestoreHandler(protectedRoot, "127.0.0.1", listener.getLocalPort(),
+                        "device", fixture.token()).restore(offer); }
+                catch (IOException failure) { throw new java.util.concurrent.CompletionException(failure); }
+            });
+            assertTrue(headerRead.await(3, TimeUnit.SECONDS));
+            Files.move(timestamp, outside);
+            Files.createSymbolicLink(timestamp, outside);
+            sendPayload.countDown();
+            assertTrue(firstByteSent.await(3, TimeUnit.SECONDS));
+            boolean wroteOutside = false;
+            try {
+                for (int attempt = 0; attempt < 50; attempt++) {
+                    try (var files = Files.list(outside)) {
+                        if (files.anyMatch(Files::isRegularFile)) { wroteOutside = true; break; }
+                    }
+                    Thread.sleep(10);
+                }
+            } finally { finishPayload.countDown(); }
+            assertFalse(wroteOutside, "Even a temporary partial file must not be written outside Protected");
+            assertThrows(Exception.class, () -> result.get(3, TimeUnit.SECONDS));
+            sender.join(3000);
+            try (var files = Files.walk(outside)) {
+                assertTrue(files.noneMatch(Files::isRegularFile), "No partial or published file may escape Protected");
             }
         }
     }

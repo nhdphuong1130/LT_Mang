@@ -13,6 +13,7 @@ import vn.edu.ltm.server.session.SessionRegistry;
 
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -126,6 +127,73 @@ class RestoreServiceTest {
             assertNotEquals(stale, fresh);
             assertThrows(SecurityException.class, () -> restarted.claim(stale, "device"));
             assertEquals(job.id(), restarted.claim(fresh, "device").jobId());
+        }
+    }
+
+    @Test void validAvailableOfferRotatesTokenOnReconnect() throws Exception {
+        Fixture fixture = fixture();
+        fixture.auth().authenticate("admin", "correct password".toCharArray());
+        try (var sessions = new SessionRegistry(fixture.devices()); var firstListener = new ServerSocket(0);
+             var firstAgent = new Socket("127.0.0.1", firstListener.getLocalPort());
+             var firstServer = firstListener.accept()) {
+            assertTrue(sessions.register("device", firstServer).accepted());
+            var service = service(fixture, sessions, NOW);
+            var job = service.request(fixture.versionId(), "device", "admin");
+            String oldToken = new LengthPrefixedJsonCodec().read(firstAgent.getInputStream()).payload().path("token").asText();
+            sessions.removeIfSame("device", sessions.find("device").orElseThrow().sessionId());
+            try (var secondListener = new ServerSocket(0);
+                 var secondAgent = new Socket("127.0.0.1", secondListener.getLocalPort());
+                 var secondServer = secondListener.accept()) {
+                secondAgent.setSoTimeout(3000);
+                assertTrue(sessions.register("device", secondServer).accepted());
+                String fresh = new LengthPrefixedJsonCodec().read(secondAgent.getInputStream()).payload().path("token").asText();
+                assertNotEquals(oldToken, fresh);
+                assertThrows(SecurityException.class, () -> service.claim(oldToken, "device"));
+                assertEquals(job.id(), service.claim(fresh, "device").jobId());
+            }
+        }
+    }
+
+    @Test void crashRecoversClaimButOrdinaryReconnectLeavesActiveClaimAlone() throws Exception {
+        Fixture fixture = fixture();
+        fixture.auth().authenticate("admin", "correct password".toCharArray());
+        RestoreJob job;
+        String consumed;
+        try (var sessions = new SessionRegistry(fixture.devices()); var firstListener = new ServerSocket(0);
+             var firstAgent = new Socket("127.0.0.1", firstListener.getLocalPort());
+             var firstServer = firstListener.accept()) {
+            assertTrue(sessions.register("device", firstServer).accepted());
+            var service = service(fixture, sessions, NOW);
+            job = service.request(fixture.versionId(), "device", "admin");
+            consumed = new LengthPrefixedJsonCodec().read(firstAgent.getInputStream()).payload().path("token").asText();
+            service.claim(consumed, "device");
+            sessions.removeIfSame("device", sessions.find("device").orElseThrow().sessionId());
+            try (var secondListener = new ServerSocket(0);
+                 var secondAgent = new Socket("127.0.0.1", secondListener.getLocalPort());
+                 var secondServer = secondListener.accept()) {
+                secondAgent.setSoTimeout(250);
+                assertTrue(sessions.register("device", secondServer).accepted());
+                assertThrows(SocketTimeoutException.class,
+                        () -> new LengthPrefixedJsonCodec().read(secondAgent.getInputStream()));
+                assertEquals(RestoreJob.Status.IN_PROGRESS, service.find(job.id()).orElseThrow().status());
+            }
+        }
+        try (var sessions = new SessionRegistry(fixture.devices())) {
+            var restarted = service(fixture, sessions, NOW.plusSeconds(30));
+            assertEquals(RestoreJob.Status.PENDING, restarted.find(job.id()).orElseThrow().status());
+            try (var listener = new ServerSocket(0);
+                 var agent = new Socket("127.0.0.1", listener.getLocalPort()); var server = listener.accept()) {
+                agent.setSoTimeout(3000);
+                assertTrue(sessions.register("device", server).accepted());
+                String fresh = new LengthPrefixedJsonCodec().read(agent.getInputStream()).payload().path("token").asText();
+                assertNotEquals(consumed, fresh);
+                assertThrows(SecurityException.class, () -> restarted.claim(consumed, "device"));
+                assertEquals(job.id(), restarted.claim(fresh, "device").jobId());
+            }
+        }
+        try (var connection = fixture.database().openConnection(); var query = connection.createStatement();
+             var rows = query.executeQuery("SELECT COUNT(*) FROM audit_logs WHERE action = 'RESTORE_RECOVERED'")) {
+            assertEquals(1, rows.getInt(1));
         }
     }
 

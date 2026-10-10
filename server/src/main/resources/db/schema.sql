@@ -48,15 +48,20 @@ CREATE TABLE IF NOT EXISTS backup_versions (
 );
 CREATE TABLE IF NOT EXISTS restore_jobs (
     id TEXT PRIMARY KEY,
-    backup_version_id INTEGER NOT NULL REFERENCES backup_versions(id),
+    backup_version_id INTEGER NOT NULL,
     device_id TEXT NOT NULL REFERENCES devices(device_id),
     admin_username TEXT NOT NULL REFERENCES admin_users(username),
+    relative_path TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+    sha256 TEXT NOT NULL,
+    storage_path TEXT NOT NULL,
     token_hash TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('PENDING', 'AVAILABLE', 'IN_PROGRESS', 'COMPLETED', 'FAILED')),
     requested_at TEXT NOT NULL,
     completed_at TEXT,
-    error TEXT
+    error TEXT,
+    lease_owner TEXT
 );
 CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
