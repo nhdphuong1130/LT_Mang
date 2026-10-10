@@ -40,4 +40,10 @@ public final class HeartbeatMonitor implements AutoCloseable {
     @Override public synchronized void close() {
         if (scheduler != null) scheduler.shutdownNow();
     }
+
+    public boolean awaitStopped(Duration wait) throws InterruptedException {
+        ScheduledExecutorService current;
+        synchronized (this) { current = scheduler; }
+        return current == null || current.awaitTermination(wait.toNanos(), TimeUnit.NANOSECONDS);
+    }
 }

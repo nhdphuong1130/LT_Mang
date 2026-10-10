@@ -8,6 +8,7 @@ import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.stage.Stage;
+import javafx.stage.WindowEvent;
 import javafx.util.Duration;
 import vn.edu.ltm.agent.alert.ConnectionStatusNotifier;
 import vn.edu.ltm.agent.alert.JavaFxAlertSink;
@@ -34,12 +35,13 @@ public final class AgentApp extends Application {
     private AgentController controller;
     private final RuntimeSwitch<AgentRuntime> runtimes = new RuntimeSwitch<>();
     private final ExecutorService shutdown = Executors.newSingleThreadExecutor(
-            Thread.ofPlatform().daemon().name("agent-shutdown").factory());
+            Thread.ofPlatform().name("agent-shutdown").factory());
     private AsyncCloseWorkflow closeWorkflow;
     private Stage stage;
     private Timeline refresh;
 
     @Override public void start(Stage stage) throws IOException {
+        Platform.setImplicitExit(false);
         this.stage = stage;
         var loader = new FXMLLoader(AgentApp.class.getResource("agent.fxml"));
         var scene = new Scene(loader.load(), 690, 390);
@@ -61,7 +63,7 @@ public final class AgentApp extends Application {
             stage.setTitle("LAN Backup Agent — closing…");
         }, () -> {
             stage.setOnCloseRequest(null);
-            shutdown.shutdown();
+            if (getParameters().getRaw().contains("--smoke")) System.out.println("AGENT_SMOKE_SHUTDOWN_COMPLETE");
             Platform.exit();
         }, failure -> {
             stage.getScene().getRoot().setDisable(false);
@@ -71,7 +73,8 @@ public final class AgentApp extends Application {
         stage.setOnCloseRequest(event -> { event.consume(); closeWorkflow.request(); });
         stage.setTitle("LAN Backup Agent"); stage.setScene(scene); stage.show();
         if (getParameters().getRaw().contains("--smoke")) {
-            var close = new Timeline(new KeyFrame(Duration.seconds(2), event -> stage.close()));
+            var close = new Timeline(new KeyFrame(Duration.seconds(2), event ->
+                    stage.fireEvent(new WindowEvent(stage, WindowEvent.WINDOW_CLOSE_REQUEST))));
             close.play();
         }
     }
@@ -94,7 +97,7 @@ public final class AgentApp extends Application {
 
     @Override public void stop() {
         if (refresh != null) refresh.stop();
-        if (closeWorkflow != null) closeWorkflow.request();
+        if (closeWorkflow != null) closeWorkflow.requestUntilComplete();
     }
 
     private static final class AgentRuntime implements AutoCloseable {

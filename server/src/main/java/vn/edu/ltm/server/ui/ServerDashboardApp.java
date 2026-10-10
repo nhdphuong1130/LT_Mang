@@ -8,6 +8,7 @@ import javafx.fxml.FXMLLoader;
 import javafx.scene.Scene;
 import javafx.scene.control.Label;
 import javafx.stage.Stage;
+import javafx.stage.WindowEvent;
 import javafx.util.Duration;
 import vn.edu.ltm.server.auth.*;
 import vn.edu.ltm.server.backup.*;
@@ -28,7 +29,7 @@ public final class ServerDashboardApp extends Application {
     private final ExecutorService worker = Executors.newSingleThreadExecutor(
             Thread.ofPlatform().daemon().name("server-admin").factory());
     private final ExecutorService shutdown = Executors.newSingleThreadExecutor(
-            Thread.ofPlatform().daemon().name("server-shutdown").factory());
+            Thread.ofPlatform().name("server-shutdown").factory());
     private final DashboardViewModel model = new DashboardViewModel(action -> {
         if (Platform.isFxApplicationThread()) action.run(); else Platform.runLater(action);
     });
@@ -39,6 +40,7 @@ public final class ServerDashboardApp extends Application {
     private AsyncCloseWorkflow closeWorkflow;
 
     @Override public void start(Stage stage) {
+        Platform.setImplicitExit(false);
         this.stage = stage;
         closeWorkflow = new AsyncCloseWorkflow(shutdown, Platform::runLater, () -> {
             stopping = true;
@@ -52,7 +54,7 @@ public final class ServerDashboardApp extends Application {
             stage.setScene(new Scene(new Label("Closing server…"), 820, 540));
         }, () -> {
             stage.setOnCloseRequest(null);
-            shutdown.shutdown();
+            if (getParameters().getRaw().contains("--smoke")) System.out.println("SERVER_SMOKE_SHUTDOWN_COMPLETE");
             Platform.exit();
         }, failure -> {
             stage.setTitle("LAN Backup Server — close failed; retry to close");
@@ -90,7 +92,8 @@ public final class ServerDashboardApp extends Application {
             controller.configure(services.auth, model, worker, this::showDashboard);
             stage.setScene(scene);
             if (getParameters().getRaw().contains("--smoke")) {
-                var close = new Timeline(new KeyFrame(Duration.seconds(2), event -> stage.close()));
+                var close = new Timeline(new KeyFrame(Duration.seconds(2), event ->
+                        stage.fireEvent(new WindowEvent(stage, WindowEvent.WINDOW_CLOSE_REQUEST))));
                 close.play();
             }
         } catch (Exception failure) { stage.setScene(new Scene(new Label("Login UI failed: " + failure.getMessage()))); }
@@ -113,7 +116,7 @@ public final class ServerDashboardApp extends Application {
     }
     @Override public void stop() {
         if (refresh != null) refresh.stop();
-        if (closeWorkflow != null) closeWorkflow.request();
+        if (closeWorkflow != null) closeWorkflow.requestUntilComplete();
     }
 
     static final class Services implements AutoCloseable {

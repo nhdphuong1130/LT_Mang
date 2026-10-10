@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -47,5 +48,22 @@ class AsyncCloseWorkflowTest {
             assertTrue(exited.await(3, TimeUnit.SECONDS));
             assertEquals(2, attempts.get());
         }
+    }
+
+    @Test void workerTerminatesBeforeUiExitCallbackAndForcedStopRetries() throws Exception {
+        var worker = Executors.newSingleThreadExecutor();
+        var ui = new LinkedBlockingQueue<Runnable>();
+        var attempts = new AtomicInteger();
+        var exited = new CountDownLatch(1);
+        var workflow = new AsyncCloseWorkflow(worker, ui::add, () -> {
+            if (attempts.incrementAndGet() == 1) throw new IllegalStateException("retry");
+        }, () -> { }, exited::countDown, failure -> fail(failure));
+        workflow.requestUntilComplete();
+        assertTrue(worker.awaitTermination(3, TimeUnit.SECONDS));
+        assertTrue(workflow.isComplete());
+        assertEquals(1, exited.getCount(), "Exit remains on the UI executor");
+        assertEquals(2, attempts.get());
+        ui.take().run();
+        assertEquals(0, exited.getCount());
     }
 }
