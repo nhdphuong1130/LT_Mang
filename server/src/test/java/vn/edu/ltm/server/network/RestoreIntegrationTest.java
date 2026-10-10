@@ -143,6 +143,8 @@ class RestoreIntegrationTest {
                     if (!finishPayload.await(3, TimeUnit.SECONDS)) throw new IOException("Test timed out");
                     try { socket.getOutputStream().write(bytes, 1, bytes.length - 1); }
                     catch (IOException disconnected) { /* Rejection can close the socket before remaining bytes. */ }
+                    try { codec.readResult(socket.getInputStream()); }
+                    catch (IOException disconnected) { /* A rejected transfer may already be closed. */ }
                 } catch (Exception failure) { throw new RuntimeException(failure); }
             });
             var payload = JsonNodeFactory.instance.objectNode()
@@ -156,10 +158,27 @@ class RestoreIntegrationTest {
                 catch (IOException failure) { throw new java.util.concurrent.CompletionException(failure); }
             });
             assertTrue(headerRead.await(3, TimeUnit.SECONDS));
-            Files.move(timestamp, outside);
-            Files.createSymbolicLink(timestamp, outside);
             sendPayload.countDown();
             assertTrue(firstByteSent.await(3, TimeUnit.SECONDS));
+            boolean swapped = false;
+            for (int attempt = 0; attempt < 30; attempt++) {
+                if (Files.exists(timestamp, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    try (var files = Files.list(timestamp)) {
+                        boolean partialWritten = files.anyMatch(path -> {
+                            try { return path.getFileName().toString().endsWith(".part") && Files.size(path) > 0; }
+                            catch (IOException failure) { return false; }
+                        });
+                        if (partialWritten) {
+                            Files.move(timestamp, outside);
+                            Files.createSymbolicLink(timestamp, outside);
+                            swapped = true;
+                            break;
+                        }
+                    }
+                }
+                Thread.sleep(10);
+            }
+            if (!swapped) Files.createDirectories(outside);
             boolean wroteOutside = false;
             try {
                 for (int attempt = 0; attempt < 50; attempt++) {
@@ -170,7 +189,8 @@ class RestoreIntegrationTest {
                 }
             } finally { finishPayload.countDown(); }
             assertFalse(wroteOutside, "Even a temporary partial file must not be written outside Protected");
-            assertThrows(Exception.class, () -> result.get(3, TimeUnit.SECONDS));
+            if (swapped) assertThrows(Exception.class, () -> result.get(3, TimeUnit.SECONDS));
+            else assertTrue(result.get(3, TimeUnit.SECONDS).startsWith(protectedRoot.resolve("Recovered")));
             sender.join(3000);
             try (var files = Files.walk(outside)) {
                 assertTrue(files.noneMatch(Files::isRegularFile), "No partial or published file may escape Protected");

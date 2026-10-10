@@ -50,6 +50,21 @@ public final class Database {
             }
         }
         migrateLegacyRestoreJobs(schema);
+        ensureRestoreColumns();
+    }
+
+    private void ensureRestoreColumns() throws SQLException {
+        var found = new java.util.HashSet<String>();
+        try (var connection = openConnection(); var statement = connection.createStatement();
+             var columns = statement.executeQuery("PRAGMA table_info(restore_jobs)")) {
+            while (columns.next()) found.add(columns.getString("name"));
+        }
+        try (var connection = openConnection(); var statement = connection.createStatement()) {
+            if (!found.contains("lease_expires_at"))
+                statement.execute("ALTER TABLE restore_jobs ADD COLUMN lease_expires_at TEXT");
+            if (!found.contains("offered_session_id"))
+                statement.execute("ALTER TABLE restore_jobs ADD COLUMN offered_session_id TEXT");
+        }
     }
 
     private void migrateLegacyRestoreJobs(String schema) throws SQLException {

@@ -19,7 +19,12 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.time.ZoneId;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -179,7 +184,9 @@ class RestoreServiceTest {
             }
         }
         try (var sessions = new SessionRegistry(fixture.devices())) {
-            var restarted = service(fixture, sessions, NOW.plusSeconds(30));
+            var concurrent = service(fixture, sessions, NOW.plusSeconds(30));
+            assertEquals(RestoreJob.Status.IN_PROGRESS, concurrent.find(job.id()).orElseThrow().status());
+            var restarted = service(fixture, sessions, NOW.plusSeconds(121));
             assertEquals(RestoreJob.Status.PENDING, restarted.find(job.id()).orElseThrow().status());
             try (var listener = new ServerSocket(0);
                  var agent = new Socket("127.0.0.1", listener.getLocalPort()); var server = listener.accept()) {
@@ -194,6 +201,116 @@ class RestoreServiceTest {
         try (var connection = fixture.database().openConnection(); var query = connection.createStatement();
              var rows = query.executeQuery("SELECT COUNT(*) FROM audit_logs WHERE action = 'RESTORE_RECOVERED'")) {
             assertEquals(1, rows.getInt(1));
+        }
+    }
+
+    @Test void heartbeatExtendsClaimLeaseSoConcurrentServiceCannotRecoverIt() throws Exception {
+        Fixture fixture = fixture();
+        fixture.auth().authenticate("admin", "correct password".toCharArray());
+        var time = new AtomicReference<>(NOW);
+        Clock mutableClock = new Clock() {
+            @Override public ZoneId getZone() { return ZoneOffset.UTC; }
+            @Override public Clock withZone(ZoneId zone) { return this; }
+            @Override public Instant instant() { return time.get(); }
+        };
+        try (var sessions = new SessionRegistry(fixture.devices()); var listener = new ServerSocket(0);
+             var agent = new Socket("127.0.0.1", listener.getLocalPort()); var server = listener.accept()) {
+            assertTrue(sessions.register("device", server).accepted());
+            var first = new RestoreService(new JdbcRestoreJobRepository(fixture.database()), fixture.auth(), sessions,
+                    mutableClock);
+            var job = first.request(fixture.versionId(), "device", "admin");
+            String token = new LengthPrefixedJsonCodec().read(agent.getInputStream()).payload().path("token").asText();
+            first.claim(token, "device");
+            time.set(NOW.plusSeconds(90));
+            assertTrue(first.renewLease(job.id()));
+            var atOneFifty = service(fixture, sessions, NOW.plusSeconds(150));
+            assertEquals(RestoreJob.Status.IN_PROGRESS, atOneFifty.find(job.id()).orElseThrow().status());
+            var atTwoEleven = service(fixture, sessions, NOW.plusSeconds(211));
+            assertEquals(RestoreJob.Status.PENDING, atTwoEleven.find(job.id()).orElseThrow().status());
+        }
+    }
+
+    @Test void customClaimLeaseExpiresDeterministically() throws Exception {
+        Fixture fixture = fixture();
+        fixture.auth().authenticate("admin", "correct password".toCharArray());
+        try (var sessions = new SessionRegistry(fixture.devices()); var listener = new ServerSocket(0);
+             var agent = new Socket("127.0.0.1", listener.getLocalPort()); var server = listener.accept()) {
+            assertTrue(sessions.register("device", server).accepted());
+            var first = new RestoreService(new JdbcRestoreJobRepository(fixture.database()), fixture.auth(), sessions,
+                    Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofSeconds(10));
+            var job = first.request(fixture.versionId(), "device", "admin");
+            var token = new LengthPrefixedJsonCodec().read(agent.getInputStream()).payload().path("token").asText();
+            first.claim(token, "device");
+            var beforeExpiry = service(fixture, sessions, NOW.plusSeconds(9));
+            assertEquals(RestoreJob.Status.IN_PROGRESS, beforeExpiry.find(job.id()).orElseThrow().status());
+            var afterExpiry = service(fixture, sessions, NOW.plusSeconds(11));
+            assertEquals(RestoreJob.Status.PENDING, afterExpiry.find(job.id()).orElseThrow().status());
+        }
+    }
+
+    @Test void concurrentNotifiersDoNotInvalidateAlreadyDeliveredOfferOnSameSession() throws Exception {
+        Fixture fixture = fixture();
+        fixture.auth().authenticate("admin", "correct password".toCharArray());
+        try (var sessions = new SessionRegistry(fixture.devices()); var listener = new ServerSocket(0);
+             var agent = new Socket("127.0.0.1", listener.getLocalPort()); var server = listener.accept()) {
+            agent.setSoTimeout(350);
+            assertTrue(sessions.register("device", server).accepted());
+            var first = service(fixture, sessions, NOW);
+            var second = service(fixture, sessions, NOW);
+            var job = first.request(fixture.versionId(), "device", "admin");
+            String delivered = new LengthPrefixedJsonCodec().read(agent.getInputStream()).payload().path("token").asText();
+            var start = new CountDownLatch(1);
+            Thread a = Thread.ofVirtual().start(() -> notifyWhenReleased(first, start));
+            Thread b = Thread.ofVirtual().start(() -> notifyWhenReleased(second, start));
+            start.countDown();
+            a.join(3000);
+            b.join(3000);
+            assertFalse(a.isAlive());
+            assertFalse(b.isAlive());
+            assertThrows(SocketTimeoutException.class,
+                    () -> new LengthPrefixedJsonCodec().read(agent.getInputStream()));
+            assertEquals(job.id(), first.claim(delivered, "device").jobId());
+        }
+    }
+
+    private static void notifyWhenReleased(RestoreService service, CountDownLatch start) {
+        try {
+            if (!start.await(3, TimeUnit.SECONDS)) throw new AssertionError("start timeout");
+            service.notifyPending("device");
+        } catch (Exception failure) { throw new AssertionError(failure); }
+    }
+
+    @Test void failedOlderNotifierCannotRevertNewerToken() throws Exception {
+        Fixture fixture = fixture();
+        fixture.auth().authenticate("admin", "correct password".toCharArray());
+        try (var sessions = new SessionRegistry(fixture.devices())) {
+            var service = service(fixture, sessions, NOW);
+            var job = service.request(fixture.versionId(), "device", "admin");
+            var repository = new JdbcRestoreJobRepository(fixture.database());
+            assertTrue(repository.offer(job.id(), RestoreJob.Status.PENDING, "", "old-hash",
+                    NOW.plusSeconds(600), UUID.randomUUID()));
+            var newerCommitted = new CountDownLatch(1);
+            var threadFailure = new AtomicReference<Throwable>();
+            Thread failedSender = Thread.ofVirtual().start(() -> {
+                try {
+                    assertTrue(newerCommitted.await(3, TimeUnit.SECONDS));
+                    repository.revertOffer(job.id(), "old-hash");
+                } catch (Throwable failure) { threadFailure.set(failure); }
+            });
+            Thread newerSender = Thread.ofVirtual().start(() -> {
+                try {
+                    assertTrue(repository.offer(job.id(), RestoreJob.Status.AVAILABLE, "old-hash", "new-hash",
+                            NOW.plusSeconds(600), UUID.randomUUID()));
+                } catch (Throwable failure) { threadFailure.set(failure); }
+                finally { newerCommitted.countDown(); }
+            });
+            failedSender.join(3000);
+            newerSender.join(3000);
+            assertFalse(failedSender.isAlive());
+            assertFalse(newerSender.isAlive());
+            assertNull(threadFailure.get());
+            assertEquals("new-hash", repository.offerSnapshot(job.id()).orElseThrow().tokenHash());
+            assertEquals(RestoreJob.Status.AVAILABLE, service.find(job.id()).orElseThrow().status());
         }
     }
 

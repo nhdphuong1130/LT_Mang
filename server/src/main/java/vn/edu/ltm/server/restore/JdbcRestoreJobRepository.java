@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -79,14 +80,16 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
         return List.copyOf(jobs);
     }
 
-    @Override public void recoverInProgress(String leaseOwner, Instant now) throws SQLException {
+    @Override public void recoverExpired(Instant now) throws SQLException {
         try (var connection = database.openConnection()) {
             connection.setAutoCommit(false);
             try (var update = connection.prepareStatement("""
-                    UPDATE restore_jobs SET status = 'PENDING', token_hash = '', lease_owner = NULL
-                    WHERE status = 'IN_PROGRESS' AND lease_owner IS NOT ? RETURNING id, device_id
+                    UPDATE restore_jobs SET status = 'PENDING', token_hash = '', lease_owner = NULL,
+                        lease_expires_at = NULL
+                    WHERE status = 'IN_PROGRESS' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+                    RETURNING id, device_id
                     """)) {
-                update.setString(1, leaseOwner);
+                update.setString(1, now.toString());
                 try (var rows = update.executeQuery(); var audit = connection.prepareStatement("""
                         INSERT INTO audit_logs(occurred_at, actor, action, device_id, details) VALUES (?, ?, ?, ?, ?)
                         """)) {
@@ -109,39 +112,61 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
         }
     }
 
-    @Override public boolean offer(UUID id, String tokenHash, Instant expiresAt) throws SQLException {
+    @Override public Optional<OfferSnapshot> offerSnapshot(UUID id) throws SQLException {
+        try (var connection = database.openConnection(); var query = connection.prepareStatement("""
+                SELECT status, token_hash, expires_at, offered_session_id FROM restore_jobs WHERE id = ?
+                """)) {
+            query.setString(1, id.toString());
+            try (var rows = query.executeQuery()) {
+                if (!rows.next()) return Optional.empty();
+                String session = rows.getString(4);
+                return Optional.of(new OfferSnapshot(RestoreJob.Status.valueOf(rows.getString(1)), rows.getString(2),
+                        Instant.parse(rows.getString(3)), session == null ? null : UUID.fromString(session)));
+            }
+        }
+    }
+
+    @Override public boolean offer(UUID id, RestoreJob.Status expectedStatus, String expectedHash,
+                                   String tokenHash, Instant expiresAt, UUID sessionId) throws SQLException {
         try (var connection = database.openConnection(); var update = connection.prepareStatement("""
-                UPDATE restore_jobs SET status = 'AVAILABLE', token_hash = ?, expires_at = ?
-                WHERE id = ? AND status IN ('PENDING', 'AVAILABLE')
+                UPDATE restore_jobs SET status = 'AVAILABLE', token_hash = ?, expires_at = ?, offered_session_id = ?
+                WHERE id = ? AND status = ? AND token_hash = ? AND status IN ('PENDING', 'AVAILABLE')
                 """)) {
             update.setString(1, tokenHash);
             update.setString(2, expiresAt.toString());
-            update.setString(3, id.toString());
+            update.setString(3, sessionId.toString());
+            update.setString(4, id.toString());
+            update.setString(5, expectedStatus.name());
+            update.setString(6, expectedHash);
             return update.executeUpdate() == 1;
         }
     }
 
-    @Override public void revertOffer(UUID id) throws SQLException {
+    @Override public void revertOffer(UUID id, String tokenHash) throws SQLException {
         try (var connection = database.openConnection(); var update = connection.prepareStatement("""
-                UPDATE restore_jobs SET status = 'PENDING', token_hash = '' WHERE id = ? AND status = 'AVAILABLE'
+                UPDATE restore_jobs SET status = 'PENDING', token_hash = '', offered_session_id = NULL
+                WHERE id = ? AND status = 'AVAILABLE' AND token_hash = ?
                 """)) {
             update.setString(1, id.toString());
+            update.setString(2, tokenHash);
             update.executeUpdate();
         }
     }
 
-    @Override public Optional<RestoreJob> claim(String tokenHash, String deviceId, String leaseOwner, Instant now) throws SQLException {
+    @Override public Optional<RestoreJob> claim(String tokenHash, String deviceId, String leaseOwner,
+                                                Instant now, Duration leaseDuration) throws SQLException {
         try (var connection = database.openConnection()) {
             connection.setAutoCommit(false);
             try (var update = connection.prepareStatement("""
-                    UPDATE restore_jobs SET status = 'IN_PROGRESS', token_hash = '', lease_owner = ?
+                    UPDATE restore_jobs SET status = 'IN_PROGRESS', token_hash = '', lease_owner = ?, lease_expires_at = ?
                     WHERE token_hash = ? AND device_id = ? AND status = 'AVAILABLE' AND expires_at > ?
                     RETURNING *
                     """)) {
                 update.setString(1, leaseOwner);
-                update.setString(2, tokenHash);
-                update.setString(3, deviceId);
-                update.setString(4, now.toString());
+                update.setString(2, now.plus(leaseDuration).toString());
+                update.setString(3, tokenHash);
+                update.setString(4, deviceId);
+                update.setString(5, now.toString());
                 RestoreJob result;
                 try (var rows = update.executeQuery()) { result = rows.next() ? read(rows) : null; }
                 connection.commit();
@@ -153,15 +178,31 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
         }
     }
 
-    @Override public void complete(UUID id, boolean success, Instant now, String error) throws SQLException {
+    @Override public boolean renewLease(UUID id, String leaseOwner, Instant now, Duration leaseDuration) throws SQLException {
         try (var connection = database.openConnection(); var update = connection.prepareStatement("""
-                UPDATE restore_jobs SET status = ?, completed_at = ?, error = ?, lease_owner = NULL
-                WHERE id = ? AND status = 'IN_PROGRESS'
+                UPDATE restore_jobs SET lease_expires_at = ?
+                WHERE id = ? AND status = 'IN_PROGRESS' AND lease_owner = ? AND lease_expires_at > ?
+                """)) {
+            update.setString(1, now.plus(leaseDuration).toString());
+            update.setString(2, id.toString());
+            update.setString(3, leaseOwner);
+            update.setString(4, now.toString());
+            return update.executeUpdate() == 1;
+        }
+    }
+
+    @Override public void complete(UUID id, String leaseOwner, boolean success, Instant now, String error) throws SQLException {
+        try (var connection = database.openConnection(); var update = connection.prepareStatement("""
+                UPDATE restore_jobs SET status = ?, completed_at = ?, error = ?, lease_owner = NULL,
+                    lease_expires_at = NULL
+                WHERE id = ? AND status = 'IN_PROGRESS' AND lease_owner = ? AND lease_expires_at > ?
                 """)) {
             update.setString(1, success ? "COMPLETED" : "FAILED");
             update.setString(2, now.toString());
             update.setString(3, error);
             update.setString(4, id.toString());
+            update.setString(5, leaseOwner);
+            update.setString(6, now.toString());
             if (update.executeUpdate() != 1) throw new IllegalStateException("Restore job is not in progress");
         }
     }

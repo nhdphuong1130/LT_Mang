@@ -92,10 +92,18 @@ public final class SessionRegistry implements AutoCloseable {
 
     /** A failed write retires only the session on which that write was attempted. */
     public boolean send(String deviceId, ControlEnvelope message) {
+        return sendOnSession(deviceId, null, message);
+    }
+
+    public boolean sendIfSame(String deviceId, UUID sessionId, ControlEnvelope message) {
+        return sendOnSession(deviceId, Objects.requireNonNull(sessionId), message);
+    }
+
+    private boolean sendOnSession(String deviceId, UUID expectedSessionId, ControlEnvelope message) {
         Objects.requireNonNull(message);
         if (!deviceId.equals(message.deviceId())) throw new IllegalArgumentException("Message device does not match recipient");
         AgentSession session = sessions.get(deviceId);
-        if (session == null) return false;
+        if (session == null || expectedSessionId != null && !expectedSessionId.equals(session.sessionId())) return false;
         try {
             session.send(message);
             return true;

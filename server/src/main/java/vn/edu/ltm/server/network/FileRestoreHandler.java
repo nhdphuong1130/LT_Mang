@@ -28,6 +28,7 @@ public final class FileRestoreHandler implements Runnable {
 
     @Override public void run() {
         RestoreService.ClaimedRestore claim = null;
+        Thread heartbeat = null;
         try (socket) {
             if (!provisioning.authenticate(header.deviceId(), header.credential())) {
                 send(TransferResult.Status.REJECTED, "Invalid device credential");
@@ -39,6 +40,21 @@ public final class FileRestoreHandler implements Runnable {
                 send(TransferResult.Status.REJECTED, "Restore token unavailable");
                 return;
             }
+            var claimedId = claim.jobId();
+            heartbeat = Thread.ofVirtual().name("restore-lease-" + claimedId).start(() -> {
+                while (!Thread.currentThread().isInterrupted()) {
+                    try {
+                        Thread.sleep(restores.heartbeatInterval());
+                        if (!restores.renewLease(claimedId)) break;
+                    } catch (InterruptedException stopped) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    } catch (SQLException failure) {
+                        break;
+                    }
+                }
+                try { socket.close(); } catch (IOException ignored) { }
+            });
             if (!Long.toString(claim.versionId()).equals(header.versionId())
                     || !claim.relativePath().equals(header.relativePath())
                     || claim.size() != header.fileSize() || !claim.sha256().equals(header.sha256())) {
@@ -71,6 +87,8 @@ public final class FileRestoreHandler implements Runnable {
                 restores.complete(claim.jobId(), new TransferResult(TransferResult.Status.ERROR, "Restore transfer failed"));
             } catch (SQLException | IllegalStateException ignored) { }
             try { send(TransferResult.Status.ERROR, "Restore transfer failed"); } catch (IOException ignored) { }
+        } finally {
+            if (heartbeat != null) heartbeat.interrupt();
         }
     }
 

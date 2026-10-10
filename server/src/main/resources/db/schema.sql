@@ -61,7 +61,9 @@ CREATE TABLE IF NOT EXISTS restore_jobs (
     requested_at TEXT NOT NULL,
     completed_at TEXT,
     error TEXT,
-    lease_owner TEXT
+    lease_owner TEXT,
+    lease_expires_at TEXT,
+    offered_session_id TEXT
 );
 CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -159,4 +159,22 @@ class SessionRegistryTest {
             assertEquals(MessageType.RESTORE_AVAILABLE, codec.read(input).type());
         }
     }
+
+    @Test void offerBoundToOldSessionCannotBeSentToReplacement() throws Exception {
+        var registry = registry();
+        try (var listener = new ServerSocket(0); var firstPeer = new Socket("127.0.0.1", listener.getLocalPort());
+             var firstOwned = listener.accept()) {
+            var old = registry.register("lab-1", firstOwned).session().sessionId();
+            registry.removeIfSame("lab-1", old);
+            try (var nextPeer = new Socket("127.0.0.1", listener.getLocalPort());
+                 var nextOwned = listener.accept()) {
+                nextPeer.setSoTimeout(250);
+                assertTrue(registry.register("lab-1", nextOwned).accepted());
+                assertFalse(registry.sendIfSame("lab-1", old, new ControlEnvelope(MessageType.RESTORE_AVAILABLE,
+                        "old", "lab-1", JsonNodeFactory.instance.objectNode())));
+                assertThrows(java.net.SocketTimeoutException.class,
+                        () -> new LengthPrefixedJsonCodec().read(nextPeer.getInputStream()));
+            }
+        }
+    }
 }
