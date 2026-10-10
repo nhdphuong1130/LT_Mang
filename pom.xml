@@ -136,6 +136,11 @@
                     <artifactId>javafx-maven-plugin</artifactId>
                     <version>0.0.8</version>
                 </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-shade-plugin</artifactId>
+                    <version>3.6.0</version>
+                </plugin>
             </plugins>
         </pluginManagement>
     </build>
@@ -150,6 +155,11 @@
             <id>linux</id>
             <activation><os><name>Linux</name></os></activation>
             <properties><javafx.platform>linux</javafx.platform></properties>
+        </profile>
+        <profile>
+            <id>mac</id>
+            <activation><os><family>mac</family></os></activation>
+            <properties><javafx.platform>mac</javafx.platform></properties>
         </profile>
     </profiles>
 </project>

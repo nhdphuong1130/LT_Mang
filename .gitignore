@@ -10,3 +10,4 @@ backup-storage/
 *.db
 *.db-shm
 *.db-wal
+*dependency-reduced-pom.xml
