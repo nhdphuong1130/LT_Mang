@@ -7,13 +7,15 @@ import java.util.concurrent.Callable;
 final class RuntimeSwitch<T extends AutoCloseable> implements AutoCloseable {
     private T active;
     private boolean closed;
+    private boolean closeRequested;
 
     synchronized T replace(Callable<T> startNew) throws Exception {
         Objects.requireNonNull(startNew);
-        if (closed) throw new IllegalStateException("Runtime switch is closed");
-        T previous = active;
-        active = null;
-        if (previous != null) previous.close();
+        if (closeRequested) throw new IllegalStateException("Runtime switch is closing");
+        if (active != null) {
+            active.close();
+            active = null;
+        }
         T started = Objects.requireNonNull(startNew.call());
         active = started;
         return started;
@@ -21,9 +23,11 @@ final class RuntimeSwitch<T extends AutoCloseable> implements AutoCloseable {
 
     @Override public synchronized void close() throws Exception {
         if (closed) return;
+        closeRequested = true;
+        if (active != null) {
+            active.close();
+            active = null;
+        }
         closed = true;
-        T previous = active;
-        active = null;
-        if (previous != null) previous.close();
     }
 }

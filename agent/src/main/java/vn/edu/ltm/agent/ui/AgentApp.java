@@ -19,6 +19,7 @@ import vn.edu.ltm.agent.persistence.AgentDatabase;
 import vn.edu.ltm.agent.restore.RestoreHandler;
 import vn.edu.ltm.agent.risk.*;
 import vn.edu.ltm.common.protocol.MessageType;
+import vn.edu.ltm.common.lifecycle.AsyncCloseWorkflow;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -32,9 +33,14 @@ public final class AgentApp extends Application {
     private final AgentSettingsStore settingsStore = new AgentSettingsStore(Path.of(System.getProperty("user.home"), ".ltm-agent"));
     private AgentController controller;
     private final RuntimeSwitch<AgentRuntime> runtimes = new RuntimeSwitch<>();
+    private final ExecutorService shutdown = Executors.newSingleThreadExecutor(
+            Thread.ofPlatform().daemon().name("agent-shutdown").factory());
+    private AsyncCloseWorkflow closeWorkflow;
+    private Stage stage;
     private Timeline refresh;
 
     @Override public void start(Stage stage) throws IOException {
+        this.stage = stage;
         var loader = new FXMLLoader(AgentApp.class.getResource("agent.fxml"));
         var scene = new Scene(loader.load(), 690, 390);
         scene.getStylesheets().add(AgentApp.class.getResource("agent.css").toExternalForm());
@@ -44,6 +50,25 @@ public final class AgentApp extends Application {
         catch (Exception failure) { controller.error("Cannot read saved configuration: " + failure.getMessage()); }
         refresh = new Timeline(new KeyFrame(Duration.seconds(1), event -> controller.refresh(model)));
         refresh.setCycleCount(Timeline.INDEFINITE); refresh.play();
+        closeWorkflow = new AsyncCloseWorkflow(shutdown, Platform::runLater, () -> {
+            setup.shutdownNow();
+            runtimes.close();
+            if (!setup.awaitTermination(10, TimeUnit.SECONDS))
+                throw new IllegalStateException("Agent setup worker did not stop");
+        }, () -> {
+            if (refresh != null) refresh.stop();
+            stage.getScene().getRoot().setDisable(true);
+            stage.setTitle("LAN Backup Agent — closing…");
+        }, () -> {
+            stage.setOnCloseRequest(null);
+            shutdown.shutdown();
+            Platform.exit();
+        }, failure -> {
+            stage.getScene().getRoot().setDisable(false);
+            stage.setTitle("LAN Backup Agent — close failed; retry to close");
+            controller.error("Could not stop Agent: " + failure.getMessage());
+        });
+        stage.setOnCloseRequest(event -> { event.consume(); closeWorkflow.request(); });
         stage.setTitle("LAN Backup Agent"); stage.setScene(scene); stage.show();
         if (getParameters().getRaw().contains("--smoke")) {
             var close = new Timeline(new KeyFrame(Duration.seconds(2), event -> stage.close()));
@@ -69,10 +94,7 @@ public final class AgentApp extends Application {
 
     @Override public void stop() {
         if (refresh != null) refresh.stop();
-        setup.shutdownNow();
-        try { runtimes.close(); }
-        catch (Exception failure) { System.getLogger(AgentApp.class.getName()).log(System.Logger.Level.ERROR,
-                "Could not stop Agent runtime", failure); }
+        if (closeWorkflow != null) closeWorkflow.request();
     }
 
     private static final class AgentRuntime implements AutoCloseable {
@@ -85,7 +107,8 @@ public final class AgentApp extends Application {
         private ControlClient control;
         private MonitoringCoordinator monitoring;
         private ProtectedFolderWatcher watcher;
-        private volatile boolean closed;
+        private volatile boolean stopping;
+        private boolean fullyClosed;
 
         AgentRuntime(AgentSettings settings, AgentViewModel model, Path databasePath) {
             this.settings = settings; this.model = model; this.databasePath = databasePath;
@@ -118,13 +141,13 @@ public final class AgentApp extends Application {
             fileTasks.submit(() -> {
                 try { new StartupReconciler(root, queue).reconcile(); }
                 catch (IOException | SQLException | InterruptedException failure) {
-                    if (!closed) model.warn("Initial folder scan failed: " + failure.getMessage());
+                    if (!stopping) model.warn("Initial folder scan failed: " + failure.getMessage());
                 }
             });
             var worker = new BackupWorker(queue,
                     new BackupUploader(root, settings.serverHost(), settings.filePort(), settings.deviceId(), settings.token()), root);
             scheduler.scheduleWithFixedDelay(() -> {
-                if (closed) return;
+                if (stopping) return;
                 try { worker.runOnce(); }
                 catch (SQLException failure) { model.warn("Backup queue error: " + failure.getMessage()); }
             }, 3, 3, TimeUnit.SECONDS);
@@ -153,13 +176,13 @@ public final class AgentApp extends Application {
                 if (eligible.eligible()) queue.enqueueOrUpdate(new BackupCandidate(eligible.relativePath(), stable.size(),
                         stable.modifiedTime().toInstant(), stable.sha256()));
             } catch (IOException | InterruptedException | SQLException failure) {
-                if (!closed) model.warn("Could not queue changed file: " + failure.getMessage());
+                if (!stopping) model.warn("Could not queue changed file: " + failure.getMessage());
             }
         }
 
-        @Override public void close() {
-            if (closed) return;
-            closed = true;
+        @Override public synchronized void close() {
+            if (fullyClosed) return;
+            stopping = true;
             scheduler.shutdownNow();
             if (control != null) control.close();
             if (monitoring != null) monitoring.close();
@@ -170,13 +193,16 @@ public final class AgentApp extends Application {
                 boolean schedulerStopped = scheduler.awaitTermination(10, TimeUnit.SECONDS);
                 boolean fileTasksStopped = fileTasks.awaitTermination(10, TimeUnit.SECONDS);
                 boolean monitoringStopped = monitoring == null || monitoring.awaitStopped(java.time.Duration.ofSeconds(10));
-                if (!schedulerStopped || !fileTasksStopped || !monitoringStopped)
+                boolean controlStopped = control == null || control.awaitStopped(java.time.Duration.ofSeconds(10));
+                boolean watcherStopped = watcher == null || watcher.awaitStopped(java.time.Duration.ofSeconds(10));
+                if (!schedulerStopped || !fileTasksStopped || !monitoringStopped || !controlStopped || !watcherStopped)
                     throw new IllegalStateException("Agent workers did not stop");
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("Interrupted while stopping Agent workers", interrupted);
             }
             if (watcherFailure != null) throw new IllegalStateException("Watcher did not close", watcherFailure);
+            fullyClosed = true;
         }
     }
 }

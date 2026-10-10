@@ -44,4 +44,34 @@ class RuntimeSwitchTest {
         switcher.close();
         assertTrue(retriedClosed.get());
     }
+
+    @Test void failedCloseRetainsExactRuntimeAndNeverStartsReplacementUntilRetrySucceeds() throws Exception {
+        var switcher = new RuntimeSwitch<AutoCloseable>();
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        var started = new java.util.concurrent.atomic.AtomicBoolean();
+        switcher.replace(() -> () -> {
+            if (attempts.incrementAndGet() == 1) throw new IllegalStateException("still stopping");
+        });
+        assertThrows(IllegalStateException.class, () -> switcher.replace(() -> {
+            started.set(true); return () -> { };
+        }));
+        assertFalse(started.get());
+        switcher.close();
+        assertEquals(2, attempts.get(), "stop retries the original runtime");
+        assertThrows(IllegalStateException.class, () -> switcher.replace(() -> {
+            started.set(true); return () -> { };
+        }));
+        assertFalse(started.get());
+    }
+
+    @Test void failedStopCanBeRetriedWithoutDroppingActiveRuntime() throws Exception {
+        var switcher = new RuntimeSwitch<AutoCloseable>();
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        switcher.replace(() -> () -> {
+            if (attempts.incrementAndGet() == 1) throw new IllegalStateException("still stopping");
+        });
+        assertThrows(IllegalStateException.class, switcher::close);
+        switcher.close();
+        assertEquals(2, attempts.get());
+    }
 }

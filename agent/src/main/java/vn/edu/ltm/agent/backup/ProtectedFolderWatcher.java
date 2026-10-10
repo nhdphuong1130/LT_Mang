@@ -125,7 +125,6 @@ public final class ProtectedFolderWatcher implements AutoCloseable {
     @Override public void close() throws IOException {
         Thread worker;
         synchronized (this) {
-            if (closed) return;
             closed = true;
             service.close();
             worker = thread;
@@ -135,5 +134,16 @@ public final class ProtectedFolderWatcher implements AutoCloseable {
             try { worker.join(1000); }
             catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         }
+    }
+
+    /** Wait for the event loop after close; safe to retry after a timeout. */
+    public boolean awaitStopped(Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(timeout);
+        if (timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("Positive timeout required");
+        Thread worker;
+        synchronized (this) { worker = thread; }
+        if (worker == null) return true;
+        worker.join(Math.max(1, timeout.toMillis()));
+        return !worker.isAlive();
     }
 }

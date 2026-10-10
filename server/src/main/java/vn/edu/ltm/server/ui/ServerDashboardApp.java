@@ -19,6 +19,7 @@ import vn.edu.ltm.server.network.*;
 import vn.edu.ltm.server.persistence.Database;
 import vn.edu.ltm.server.restore.*;
 import vn.edu.ltm.server.session.SessionRegistry;
+import vn.edu.ltm.common.lifecycle.AsyncCloseWorkflow;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.concurrent.*;
@@ -26,16 +27,38 @@ import java.util.concurrent.*;
 public final class ServerDashboardApp extends Application {
     private final ExecutorService worker = Executors.newSingleThreadExecutor(
             Thread.ofPlatform().daemon().name("server-admin").factory());
+    private final ExecutorService shutdown = Executors.newSingleThreadExecutor(
+            Thread.ofPlatform().daemon().name("server-shutdown").factory());
     private final DashboardViewModel model = new DashboardViewModel(action -> {
         if (Platform.isFxApplicationThread()) action.run(); else Platform.runLater(action);
     });
     private Stage stage;
-    private Services services;
+    private volatile Services services;
     private Timeline refresh;
     private volatile boolean stopping;
+    private AsyncCloseWorkflow closeWorkflow;
 
     @Override public void start(Stage stage) {
         this.stage = stage;
+        closeWorkflow = new AsyncCloseWorkflow(shutdown, Platform::runLater, () -> {
+            stopping = true;
+            worker.shutdownNow();
+            if (!worker.awaitTermination(10, TimeUnit.SECONDS))
+                throw new IllegalStateException("Server admin worker did not stop");
+            if (services != null) services.close();
+        }, () -> {
+            if (refresh != null) refresh.stop();
+            stage.setTitle("LAN Backup Server — closing…");
+            stage.setScene(new Scene(new Label("Closing server…"), 820, 540));
+        }, () -> {
+            stage.setOnCloseRequest(null);
+            shutdown.shutdown();
+            Platform.exit();
+        }, failure -> {
+            stage.setTitle("LAN Backup Server — close failed; retry to close");
+            stage.setScene(new Scene(new Label("Shutdown failed: " + failure.getMessage() + " — close again to retry"), 820, 540));
+        });
+        stage.setOnCloseRequest(event -> { event.consume(); closeWorkflow.request(); });
         stage.setTitle("LAN Backup Server");
         stage.setScene(new Scene(new Label("Starting server…"), 820, 540));
         stage.show();
@@ -49,14 +72,15 @@ public final class ServerDashboardApp extends Application {
                 services = new Services(dataDir, bind, controlPort, filePort);
                 services.start();
                 if (stopping) { services.close(); return; }
-                Platform.runLater(this::showLogin);
+                if (!stopping) Platform.runLater(this::showLogin);
             } catch (Exception failure) {
-                Platform.runLater(() -> stage.setScene(new Scene(
+                if (!stopping) Platform.runLater(() -> stage.setScene(new Scene(
                         new Label("Server startup failed: " + failure.getMessage()), 820, 540)));
             }
         });
     }
     private void showLogin() {
+        if (stopping) return;
         try {
             if (refresh != null) { refresh.stop(); refresh = null; }
             var loader = new FXMLLoader(ServerDashboardApp.class.getResource("login.fxml"));
@@ -72,6 +96,7 @@ public final class ServerDashboardApp extends Application {
         } catch (Exception failure) { stage.setScene(new Scene(new Label("Login UI failed: " + failure.getMessage()))); }
     }
     private void showDashboard() {
+        if (stopping) return;
         try {
             var loader = new FXMLLoader(ServerDashboardApp.class.getResource("dashboard.fxml"));
             var scene = new Scene(loader.load(), 920, 640);
@@ -87,10 +112,8 @@ public final class ServerDashboardApp extends Application {
         } catch (Exception failure) { stage.setScene(new Scene(new Label("Dashboard UI failed: " + failure.getMessage()))); }
     }
     @Override public void stop() {
-        stopping = true;
         if (refresh != null) refresh.stop();
-        worker.shutdownNow();
-        if (services != null) services.close();
+        if (closeWorkflow != null) closeWorkflow.request();
     }
 
     static final class Services implements AutoCloseable {

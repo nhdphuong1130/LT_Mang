@@ -9,6 +9,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.Objects;
 import java.util.UUID;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -119,6 +120,17 @@ public final class ControlClient implements AutoCloseable {
                 catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
             }
         }
+    }
+
+    /** Wait for the connection loop after close; safe to retry after a timeout. */
+    public boolean awaitStopped(Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(timeout);
+        if (timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("Positive timeout required");
+        Thread currentWorker;
+        synchronized (this) { currentWorker = worker; }
+        if (currentWorker == null) return true;
+        currentWorker.join(Math.max(1, timeout.toMillis()));
+        return !currentWorker.isAlive();
     }
 
     /** Delayed cleanup of an old generation must never unpublish a replacement connection. */
