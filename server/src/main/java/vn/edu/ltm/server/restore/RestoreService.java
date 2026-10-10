@@ -132,9 +132,8 @@ public final class RestoreService {
         var job = jobs.find(jobId).orElseThrow(() -> new IllegalArgumentException("Restore job does not exist"));
         boolean success = result.status() == TransferResult.Status.STORED;
         String error = success ? null : result.message();
-        jobs.complete(jobId, leaseOwner, success, clock.instant(), error);
-        jobs.audit(clock.instant(), job.deviceId(), success ? "RESTORE_COMPLETE" : "RESTORE_FAILURE",
-                job.deviceId(), "job=" + jobId + (error == null ? "" : ", reason=" + error));
+        jobs.completeAndAudit(jobId, leaseOwner, success, clock.instant(), error, job.deviceId(), job.deviceId(),
+                "job=" + jobId + (error == null ? "" : ", reason=" + error));
         cleanupOrphanedBlobs();
     }
 

@@ -93,7 +93,7 @@ public final class ServerDashboardApp extends Application {
         if (services != null) services.close();
     }
 
-    private static final class Services implements AutoCloseable {
+    static final class Services implements AutoCloseable {
         private final Database database;
         private final DeviceRepository devices;
         private final AdminAuthService auth;
@@ -102,6 +102,7 @@ public final class ServerDashboardApp extends Application {
         private final RestoreService restores;
         private final ControlTcpServer control;
         private final FileTransferServer files;
+        private final ServerListeners listeners;
         Services(Path dataDir, String bind, int controlPort, int filePort) throws Exception {
             database = new Database(dataDir.resolve("server.db")); database.initialize();
             devices = new JdbcDeviceRepository(database);
@@ -117,12 +118,15 @@ public final class ServerDashboardApp extends Application {
             control = new ControlTcpServer(new ServerConfig(bind, controlPort), provisioning, sessions,
                     Clock.systemUTC(), new MetricsMessageHandler(metrics, new IncidentService(incidents), sessions));
             files = new FileTransferServer(bind, filePort, provisioning, backups, restores);
+            listeners = new ServerListeners(new ServerListeners.Listener() {
+                public void start() throws Exception { files.start(); }
+                public void close() { files.close(); }
+            }, new ServerListeners.Listener() {
+                public void start() throws Exception { control.start(); }
+                public void close() { control.close(); }
+            });
         }
-        void start() throws Exception {
-            control.start();
-            try { files.start(); }
-            catch (Exception failure) { control.close(); throw failure; }
-        }
-        @Override public void close() { files.close(); control.close(); }
+        void start() throws Exception { listeners.start(); }
+        @Override public void close() { listeners.close(); }
     }
 }

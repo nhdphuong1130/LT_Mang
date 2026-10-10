@@ -7,10 +7,23 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 public final class AgentSettingsStore {
     private final Path directory;
     public AgentSettingsStore(Path directory) { this.directory = directory.toAbsolutePath().normalize(); }
+    /** Stable per-device/root database path; credentials never influence or appear in its name. */
+    public Path stateDatabasePath(AgentSettings settings) {
+        try {
+            var digest = MessageDigest.getInstance("SHA-256");
+            digest.update(settings.deviceId().getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            digest.update(settings.protectedRoot().toString().getBytes(StandardCharsets.UTF_8));
+            return directory.resolve("state").resolve(HexFormat.of().formatHex(digest.digest()) + ".db");
+        } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+    }
     public Optional<AgentSettings> load() throws IOException {
         Path config = directory.resolve("agent.properties"), tokenFile = directory.resolve("device.token");
         if (!Files.exists(config) || !Files.exists(tokenFile)) return Optional.empty();

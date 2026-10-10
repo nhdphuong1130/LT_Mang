@@ -31,9 +31,8 @@ public final class AgentApp extends Application {
     private final AgentViewModel model = new AgentViewModel(Platform::runLater);
     private final AgentSettingsStore settingsStore = new AgentSettingsStore(Path.of(System.getProperty("user.home"), ".ltm-agent"));
     private AgentController controller;
-    private AgentRuntime runtime;
+    private final RuntimeSwitch<AgentRuntime> runtimes = new RuntimeSwitch<>();
     private Timeline refresh;
-    private boolean stopping;
 
     @Override public void start(Stage stage) throws IOException {
         var loader = new FXMLLoader(AgentApp.class.getResource("agent.fxml"));
@@ -54,21 +53,15 @@ public final class AgentApp extends Application {
 
     private void startRuntime(AgentSettings settings) {
         setup.submit(() -> {
-            AgentRuntime replacement = null;
             try {
-                settingsStore.save(settings);
-                replacement = new AgentRuntime(settings, model);
-                replacement.start();
-                AgentRuntime previous;
-                synchronized (this) {
-                    if (stopping) { replacement.close(); return; }
-                    previous = runtime;
-                    runtime = replacement;
-                }
-                if (previous != null) previous.close();
+                runtimes.replace(() -> {
+                    settingsStore.save(settings);
+                    var replacement = new AgentRuntime(settings, model, settingsStore.stateDatabasePath(settings));
+                    try { replacement.start(); return replacement; }
+                    catch (Exception failure) { replacement.close(); throw failure; }
+                });
                 Platform.runLater(controller::started);
             } catch (Exception failure) {
-                if (replacement != null) replacement.close();
                 Platform.runLater(() -> controller.error("Cannot start Agent: " + failure.getMessage()));
             }
         });
@@ -76,15 +69,16 @@ public final class AgentApp extends Application {
 
     @Override public void stop() {
         if (refresh != null) refresh.stop();
-        AgentRuntime active;
-        synchronized (this) { stopping = true; active = runtime; runtime = null; }
         setup.shutdownNow();
-        if (active != null) active.close();
+        try { runtimes.close(); }
+        catch (Exception failure) { System.getLogger(AgentApp.class.getName()).log(System.Logger.Level.ERROR,
+                "Could not stop Agent runtime", failure); }
     }
 
     private static final class AgentRuntime implements AutoCloseable {
         private final AgentSettings settings;
         private final AgentViewModel model;
+        private final Path databasePath;
         private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2,
                 Thread.ofPlatform().daemon().name("agent-backup", 0).factory());
         private final ExecutorService fileTasks = Executors.newVirtualThreadPerTaskExecutor();
@@ -93,11 +87,13 @@ public final class AgentApp extends Application {
         private ProtectedFolderWatcher watcher;
         private volatile boolean closed;
 
-        AgentRuntime(AgentSettings settings, AgentViewModel model) { this.settings = settings; this.model = model; }
+        AgentRuntime(AgentSettings settings, AgentViewModel model, Path databasePath) {
+            this.settings = settings; this.model = model; this.databasePath = databasePath;
+        }
 
         void start() throws IOException, SQLException {
             Path root = settings.protectedRoot();
-            var database = new AgentDatabase(Path.of(System.getProperty("user.home"), ".ltm-agent", "agent.db"));
+            var database = new AgentDatabase(databasePath);
             database.initialize();
             var queue = new JdbcBackupQueueRepository(database);
             var stability = new FileStabilityChecker(root);
@@ -162,12 +158,25 @@ public final class AgentApp extends Application {
         }
 
         @Override public void close() {
+            if (closed) return;
             closed = true;
             scheduler.shutdownNow();
-            if (watcher != null) try { watcher.close(); } catch (IOException ignored) { }
-            if (monitoring != null) monitoring.close();
             if (control != null) control.close();
+            if (monitoring != null) monitoring.close();
+            IOException watcherFailure = null;
+            if (watcher != null) try { watcher.close(); } catch (IOException failure) { watcherFailure = failure; }
             fileTasks.shutdownNow();
+            try {
+                boolean schedulerStopped = scheduler.awaitTermination(10, TimeUnit.SECONDS);
+                boolean fileTasksStopped = fileTasks.awaitTermination(10, TimeUnit.SECONDS);
+                boolean monitoringStopped = monitoring == null || monitoring.awaitStopped(java.time.Duration.ofSeconds(10));
+                if (!schedulerStopped || !fileTasksStopped || !monitoringStopped)
+                    throw new IllegalStateException("Agent workers did not stop");
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while stopping Agent workers", interrupted);
+            }
+            if (watcherFailure != null) throw new IllegalStateException("Watcher did not close", watcherFailure);
         }
     }
 }

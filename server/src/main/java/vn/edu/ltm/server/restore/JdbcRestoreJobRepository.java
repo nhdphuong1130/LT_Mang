@@ -192,8 +192,24 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
         }
     }
 
-    @Override public void complete(UUID id, String leaseOwner, boolean success, Instant now, String error) throws SQLException {
-        try (var connection = database.openConnection(); var update = connection.prepareStatement("""
+    @Override public void completeAndAudit(UUID id, String leaseOwner, boolean success, Instant now, String error,
+                                           String actor, String deviceId, String details) throws SQLException {
+        try (var connection = database.openConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                complete(connection, id, leaseOwner, success, now, error);
+                audit(connection, now, actor, success ? "RESTORE_COMPLETE" : "RESTORE_FAILURE", deviceId, details);
+                connection.commit();
+            } catch (SQLException | RuntimeException failure) {
+                try { connection.rollback(); } catch (SQLException rollbackFailure) { failure.addSuppressed(rollbackFailure); }
+                throw failure;
+            }
+        }
+    }
+
+    private static void complete(java.sql.Connection connection, UUID id, String leaseOwner, boolean success,
+                                 Instant now, String error) throws SQLException {
+        try (var update = connection.prepareStatement("""
                 UPDATE restore_jobs SET status = ?, completed_at = ?, error = ?, lease_owner = NULL,
                     lease_expires_at = NULL
                 WHERE id = ? AND status = 'IN_PROGRESS' AND lease_owner = ? AND lease_expires_at > ?
@@ -209,7 +225,12 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
     }
 
     @Override public void audit(Instant at, String actor, String action, String deviceId, String details) throws SQLException {
-        try (var connection = database.openConnection(); var insert = connection.prepareStatement("""
+        try (var connection = database.openConnection()) { audit(connection, at, actor, action, deviceId, details); }
+    }
+
+    private static void audit(java.sql.Connection connection, Instant at, String actor, String action,
+                              String deviceId, String details) throws SQLException {
+        try (var insert = connection.prepareStatement("""
                 INSERT INTO audit_logs(occurred_at, actor, action, device_id, details) VALUES (?, ?, ?, ?, ?)
                 """)) {
             insert.setString(1, at.toString());

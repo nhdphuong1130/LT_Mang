@@ -12,6 +12,26 @@ import java.util.concurrent.atomic.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class MonitoringCoordinatorTest {
+    @Test void callerCanWaitForOutputWorkerAfterClosingItsTransport() throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
+        var coordinator = new MonitoringCoordinator("lab-1", message -> {
+            entered.countDown();
+            boolean done = false;
+            while (!done) try { release.await(); done = true; }
+            catch (InterruptedException ignored) { }
+        }, () -> new SystemMetrics(clock.instant(), 0, 0, 0, null, null, false),
+                new RiskDetector(), event -> { }, clock);
+        try {
+            coordinator.sample();
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+            coordinator.close();
+            assertFalse(coordinator.awaitStopped(Duration.ofMillis(30)));
+            release.countDown();
+            assertTrue(coordinator.awaitStopped(Duration.ofSeconds(2)));
+        } finally { release.countDown(); coordinator.close(); }
+    }
     @Test void completingAnOldWriteCannotRemoveAnEqualReopenedRisk() throws Exception {
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);

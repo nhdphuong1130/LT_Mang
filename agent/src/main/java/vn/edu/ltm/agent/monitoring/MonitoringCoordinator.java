@@ -150,6 +150,18 @@ public final class MonitoringCoordinator implements AutoCloseable {
         scheduler.shutdownNow(); outputWorker.interrupt();
     }
 
+    /** Optional lifecycle barrier for owners that must replace this coordinator without overlap. */
+    public boolean awaitStopped(java.time.Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(timeout);
+        if (timeout.isZero() || timeout.isNegative()) throw new IllegalArgumentException("Positive timeout required");
+        if (!closed) throw new IllegalStateException("Close monitoring before awaiting termination");
+        long deadline = System.nanoTime() + timeout.toNanos();
+        outputWorker.join(Math.max(1, TimeUnit.NANOSECONDS.toMillis(timeout.toNanos())));
+        if (outputWorker.isAlive()) return false;
+        long remaining = deadline - System.nanoTime();
+        return scheduler.awaitTermination(Math.max(0, remaining), TimeUnit.NANOSECONDS);
+    }
+
     private record OutputBatch(ControlEnvelope heartbeat, ControlEnvelope metrics,
                                List<RiskEvent> resolutions, List<RiskEvent> active) { }
 }

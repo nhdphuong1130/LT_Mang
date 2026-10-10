@@ -23,7 +23,9 @@ public interface RestoreJobRepository {
     void revertOffer(UUID id, String tokenHash) throws SQLException;
     Optional<RestoreJob> claim(String tokenHash, String deviceId, String leaseOwner, Instant now, Duration leaseDuration) throws SQLException;
     boolean renewLease(UUID id, String leaseOwner, Instant now, Duration leaseDuration) throws SQLException;
-    void complete(UUID id, String leaseOwner, boolean success, Instant now, String error) throws SQLException;
+    /** Publishes a terminal status and its audit as one observable transaction. */
+    void completeAndAudit(UUID id, String leaseOwner, boolean success, Instant now, String error,
+                          String actor, String deviceId, String details) throws SQLException;
     void audit(Instant at, String actor, String action, String deviceId, String details) throws SQLException;
     List<Path> orphanedBlobs() throws SQLException;
 }

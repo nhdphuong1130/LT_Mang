@@ -67,7 +67,8 @@ class JdbcRestoreTimestampTest {
         claim(repo, earlyRenew, ZERO.plusMillis(500));
         assertTrue(repo.renewLease(earlyRenew.id(), "owner", ZERO.plusSeconds(10), Duration.ofSeconds(10)));
         assertTrue(repo.renewLease(earlyRenew.id(), "owner", ZERO.plusSeconds(19), Duration.ofSeconds(10)));
-        repo.complete(earlyRenew.id(), "owner", true, ZERO.plusSeconds(19).plusMillis(500), null);
+        repo.completeAndAudit(earlyRenew.id(), "owner", true, ZERO.plusSeconds(19).plusMillis(500), null,
+                "device", "device", "job=" + earlyRenew.id());
         assertEquals(RestoreJob.Status.COMPLETED, repo.find(earlyRenew.id()).orElseThrow().status());
 
         var lateRenew = fixture.job(ZERO.plusSeconds(30));
@@ -75,7 +76,8 @@ class JdbcRestoreTimestampTest {
         assertFalse(repo.renewLease(lateRenew.id(), "owner", ZERO.plusSeconds(40).plusMillis(500),
                 Duration.ofSeconds(10)));
         assertThrows(IllegalStateException.class,
-                () -> repo.complete(lateRenew.id(), "owner", true, ZERO.plusSeconds(40).plusMillis(500), null));
+                () -> repo.completeAndAudit(lateRenew.id(), "owner", true, ZERO.plusSeconds(40).plusMillis(500), null,
+                        "device", "device", "job=" + lateRenew.id()));
     }
 
     @Test void existingVariablePrecisionRowsAreNormalizedOnDatabaseInitialization() throws Exception {

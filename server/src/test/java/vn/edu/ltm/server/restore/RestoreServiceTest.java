@@ -77,6 +77,49 @@ class RestoreServiceTest {
         }
     }
 
+    @Test void terminalStatusAndAuditAreCommittedTogetherForSuccessAndFailure() throws Exception {
+        Fixture fixture = fixture();
+        fixture.auth().authenticate("admin", "correct password".toCharArray());
+        try (var sessions = new SessionRegistry(fixture.devices()); var listener = new ServerSocket(0);
+             var agent = new Socket("127.0.0.1", listener.getLocalPort()); var server = listener.accept()) {
+            assertTrue(sessions.register("device", server).accepted());
+            var service = service(fixture, sessions, NOW);
+            for (var result : java.util.List.of(
+                    new TransferResult(TransferResult.Status.STORED, "Restored"),
+                    new TransferResult(TransferResult.Status.REJECTED, "Bad checksum"))) {
+                var job = service.request(fixture.versionId(), "device", "admin");
+                String token = new LengthPrefixedJsonCodec().read(agent.getInputStream()).payload().path("token").asText();
+                service.claim(token, "device");
+                try (var connection = fixture.database().openConnection(); var statement = connection.createStatement()) {
+                    statement.execute("""
+                            CREATE TRIGGER block_terminal_audit BEFORE INSERT ON audit_logs
+                            WHEN NEW.action IN ('RESTORE_COMPLETE', 'RESTORE_FAILURE')
+                            BEGIN SELECT RAISE(FAIL, 'blocked terminal audit'); END
+                            """);
+                }
+                try {
+                    assertThrows(java.sql.SQLException.class, () -> service.complete(job.id(), result));
+                    assertEquals(RestoreJob.Status.IN_PROGRESS, service.find(job.id()).orElseThrow().status(),
+                            "Readers must not see terminal status without its audit");
+                } finally {
+                    try (var connection = fixture.database().openConnection(); var statement = connection.createStatement()) {
+                        statement.execute("DROP TRIGGER block_terminal_audit");
+                    }
+                }
+                service.complete(job.id(), result);
+                boolean success = result.status() == TransferResult.Status.STORED;
+                assertEquals(success ? RestoreJob.Status.COMPLETED : RestoreJob.Status.FAILED,
+                        service.find(job.id()).orElseThrow().status());
+                try (var connection = fixture.database().openConnection(); var query = connection.prepareStatement(
+                        "SELECT COUNT(*) FROM audit_logs WHERE action = ? AND details LIKE ?")) {
+                    query.setString(1, success ? "RESTORE_COMPLETE" : "RESTORE_FAILURE");
+                    query.setString(2, "job=" + job.id() + "%");
+                    try (var rows = query.executeQuery()) { assertEquals(1, rows.getInt(1)); }
+                }
+            }
+        }
+    }
+
     @Test void pendingJobIsOfferedWhenDeviceReconnects() throws Exception {
         Fixture fixture = fixture();
         fixture.auth().authenticate("admin", "correct password".toCharArray());
