@@ -1,6 +1,7 @@
 package vn.edu.ltm.server.restore;
 
 import vn.edu.ltm.server.persistence.Database;
+import vn.edu.ltm.server.persistence.SqlTimestamp;
 
 import java.nio.file.Path;
 import java.sql.ResultSet;
@@ -41,8 +42,8 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
                 """)) {
             insert.setString(1, job.id().toString());
             insert.setString(2, job.adminUsername());
-            insert.setString(3, job.expiresAt().toString());
-            insert.setString(4, job.requestedAt().toString());
+            insert.setString(3, SqlTimestamp.format(job.expiresAt()));
+            insert.setString(4, SqlTimestamp.format(job.requestedAt()));
             insert.setLong(5, job.backupVersionId());
             insert.setString(6, job.deviceId());
             if (insert.executeUpdate() != 1) throw new IllegalArgumentException("Backup version is no longer available");
@@ -89,7 +90,7 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
                     WHERE status = 'IN_PROGRESS' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
                     RETURNING id, device_id
                     """)) {
-                update.setString(1, now.toString());
+                update.setString(1, SqlTimestamp.format(now));
                 try (var rows = update.executeQuery(); var audit = connection.prepareStatement("""
                         INSERT INTO audit_logs(occurred_at, actor, action, device_id, details) VALUES (?, ?, ?, ?, ?)
                         """)) {
@@ -133,7 +134,7 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
                 WHERE id = ? AND status = ? AND token_hash = ? AND status IN ('PENDING', 'AVAILABLE')
                 """)) {
             update.setString(1, tokenHash);
-            update.setString(2, expiresAt.toString());
+            update.setString(2, SqlTimestamp.format(expiresAt));
             update.setString(3, sessionId.toString());
             update.setString(4, id.toString());
             update.setString(5, expectedStatus.name());
@@ -163,10 +164,10 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
                     RETURNING *
                     """)) {
                 update.setString(1, leaseOwner);
-                update.setString(2, now.plus(leaseDuration).toString());
+                update.setString(2, SqlTimestamp.format(now.plus(leaseDuration)));
                 update.setString(3, tokenHash);
                 update.setString(4, deviceId);
-                update.setString(5, now.toString());
+                update.setString(5, SqlTimestamp.format(now));
                 RestoreJob result;
                 try (var rows = update.executeQuery()) { result = rows.next() ? read(rows) : null; }
                 connection.commit();
@@ -183,10 +184,10 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
                 UPDATE restore_jobs SET lease_expires_at = ?
                 WHERE id = ? AND status = 'IN_PROGRESS' AND lease_owner = ? AND lease_expires_at > ?
                 """)) {
-            update.setString(1, now.plus(leaseDuration).toString());
+            update.setString(1, SqlTimestamp.format(now.plus(leaseDuration)));
             update.setString(2, id.toString());
             update.setString(3, leaseOwner);
-            update.setString(4, now.toString());
+            update.setString(4, SqlTimestamp.format(now));
             return update.executeUpdate() == 1;
         }
     }
@@ -198,11 +199,11 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
                 WHERE id = ? AND status = 'IN_PROGRESS' AND lease_owner = ? AND lease_expires_at > ?
                 """)) {
             update.setString(1, success ? "COMPLETED" : "FAILED");
-            update.setString(2, now.toString());
+            update.setString(2, SqlTimestamp.format(now));
             update.setString(3, error);
             update.setString(4, id.toString());
             update.setString(5, leaseOwner);
-            update.setString(6, now.toString());
+            update.setString(6, SqlTimestamp.format(now));
             if (update.executeUpdate() != 1) throw new IllegalStateException("Restore job is not in progress");
         }
     }

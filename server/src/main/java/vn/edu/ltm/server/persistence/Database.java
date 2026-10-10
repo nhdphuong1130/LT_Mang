@@ -7,6 +7,8 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.Objects;
 
 /** Connections are short-lived and owned by callers. */
@@ -51,6 +53,49 @@ public final class Database {
         }
         migrateLegacyRestoreJobs(schema);
         ensureRestoreColumns();
+        normalizeRestoreTimestamps();
+    }
+
+    private void normalizeRestoreTimestamps() throws SQLException {
+        record TimestampRow(String id, String expiresAt, String requestedAt, String completedAt,
+                            String leaseExpiresAt) { }
+        try (var connection = openConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                var changed = new ArrayList<TimestampRow>();
+                try (var query = connection.createStatement(); var rows = query.executeQuery("""
+                        SELECT id, expires_at, requested_at, completed_at, lease_expires_at FROM restore_jobs
+                        """)) {
+                    while (rows.next()) {
+                        String expires = SqlTimestamp.normalize(rows.getString(2));
+                        String requested = SqlTimestamp.normalize(rows.getString(3));
+                        String completed = SqlTimestamp.normalize(rows.getString(4));
+                        String lease = SqlTimestamp.normalize(rows.getString(5));
+                        if (!expires.equals(rows.getString(2)) || !requested.equals(rows.getString(3))
+                                || completed != null && !completed.equals(rows.getString(4))
+                                || lease != null && !lease.equals(rows.getString(5)))
+                            changed.add(new TimestampRow(rows.getString(1), expires, requested, completed, lease));
+                    }
+                }
+                try (var update = connection.prepareStatement("""
+                        UPDATE restore_jobs SET expires_at = ?, requested_at = ?, completed_at = ?,
+                            lease_expires_at = ? WHERE id = ?
+                        """)) {
+                    for (var row : changed) {
+                        update.setString(1, row.expiresAt());
+                        update.setString(2, row.requestedAt());
+                        update.setString(3, row.completedAt());
+                        update.setString(4, row.leaseExpiresAt());
+                        update.setString(5, row.id());
+                        update.executeUpdate();
+                    }
+                }
+                connection.commit();
+            } catch (SQLException | DateTimeParseException failure) {
+                connection.rollback();
+                throw failure instanceof SQLException sql ? sql : new SQLException("Invalid restore timestamp", failure);
+            }
+        }
     }
 
     private void ensureRestoreColumns() throws SQLException {
