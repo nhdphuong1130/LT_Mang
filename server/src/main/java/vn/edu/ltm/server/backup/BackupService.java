@@ -26,7 +26,8 @@ public final class BackupService {
                 || header.fileSize() > MAX_FILE_SIZE || !header.sha256().matches("[0-9a-f]{64}"))
             throw new IllegalArgumentException("Invalid upload metadata");
         Path finalPath = paths.resolve(header.deviceId(), header.relativePath(), UUID.randomUUID().toString());
-        Path tempPath = paths.tempPath(header.transferId());
+        // The peer's transfer ID is correlation metadata, not a filesystem reservation key.
+        Path tempPath = paths.tempPath(UUID.randomUUID().toString());
         var versions = repository.versions(header.deviceId(), header.relativePath());
         if (!versions.isEmpty() && versions.getFirst().sha256().equals(header.sha256())) return null;
         return new UploadReservation(header, tempPath, finalPath);
@@ -54,13 +55,20 @@ public final class BackupService {
             } catch (AtomicMoveNotSupportedException unsupported) {
                 Files.move(tempFile, reservation.finalPath());
             }
+            java.util.List<Path> removed;
             try {
-                var removed = repository.commitVersion(header.deviceId(), header.relativePath(), header.fileSize(),
+                removed = repository.commitVersion(header.deviceId(), header.relativePath(), header.fileSize(),
                         header.sha256(), reservation.finalPath());
-                for (Path path : removed) Files.deleteIfExists(path);
             } catch (SQLException failure) {
                 Files.deleteIfExists(reservation.finalPath());
                 throw failure;
+            }
+            for (Path path : removed) {
+                try { Files.deleteIfExists(path); }
+                catch (IOException | SecurityException failure) {
+                    System.getLogger(BackupService.class.getName()).log(System.Logger.Level.WARNING,
+                            "Could not remove expired backup blob: " + path, failure);
+                }
             }
             return new TransferResult(TransferResult.Status.STORED, "Stored");
         } finally { Files.deleteIfExists(tempFile); }

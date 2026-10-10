@@ -63,4 +63,36 @@ class BackupServiceTest {
         assertTrue(repo.versions("device", "file.txt").isEmpty());
         assertFalse(Files.exists(temp));
     }
+
+    @Test void failedOldBlobCleanupDoesNotTurnCommittedUploadIntoFailure() throws Exception {
+        var database = new Database(root.resolve("server.db"));
+        database.initialize();
+        new DeviceProvisioningService(new JdbcDeviceRepository(database)).provision("device", "Device", "Linux");
+        var repo = new JdbcBackupRepository(database);
+        var service = new BackupService(repo, new StoragePathResolver(root.resolve("storage")));
+        Path oldest = null;
+        for (int i = 0; i < 6; i++) {
+            Path source = root.resolve("source-" + i);
+            Files.writeString(source, "version-" + i);
+            String sha = Hashing.sha256(source);
+            var header = new FileTransferHeader(FileOperation.BACKUP_UPLOAD, UUID.randomUUID().toString(),
+                    "device", "unused", "file.txt", Files.size(source), sha, null);
+            var reservation = service.acceptUpload(header);
+            service.prepare(reservation);
+            Files.copy(source, service.tempPath(reservation));
+            if (i == 5) {
+                // A nonempty directory at the old blob path forces a portable delete failure.
+                Files.delete(oldest);
+                Files.createDirectory(oldest);
+                Files.writeString(oldest.resolve("sentinel"), "keep");
+            }
+            assertEquals(TransferResult.Status.STORED,
+                    service.complete(reservation, service.tempPath(reservation), sha).status());
+            if (i == 0) oldest = repo.versions("device", "file.txt").getFirst().storagePath();
+        }
+        var versions = repo.versions("device", "file.txt");
+        assertEquals(5, versions.size());
+        assertEquals("version-5", Files.readString(versions.getFirst().storagePath()));
+        assertTrue(Files.exists(oldest.resolve("sentinel")), "Cleanup debt must not erase committed metadata");
+    }
 }

@@ -93,6 +93,35 @@ class FileUploadIntegrationTest {
         assertFalse(hasParts());
     }
 
+    @Test void duplicateTransferIdCannotDeleteAnotherSessionsActiveTemporaryFile() throws Exception {
+        var fixture = fixture();
+        Path source = root.resolve("source");
+        Files.writeString(source, "abcdefghij");
+        var header = header(fixture.token(), source);
+        try (var server = fixture.server()) {
+            server.start();
+            try (var first = new Socket("127.0.0.1", server.port())) {
+                first.setSoTimeout(3000);
+                codec.writeHeader(first.getOutputStream(), header);
+                assertEquals(TransferResult.Status.READY, codec.readResult(first.getInputStream()).status());
+                first.getOutputStream().write("abcde".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+                try (var second = new Socket("127.0.0.1", server.port())) {
+                    second.setSoTimeout(3000);
+                    codec.writeHeader(second.getOutputStream(), header);
+                    assertEquals(TransferResult.Status.READY, codec.readResult(second.getInputStream()).status());
+                }
+
+                first.getOutputStream().write("fghij".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                assertEquals(TransferResult.Status.STORED, codec.readResult(first.getInputStream()).status());
+            }
+        }
+        var versions = fixture.repo().versions("device", "file.txt");
+        assertEquals(1, versions.size());
+        assertEquals("abcdefghij", Files.readString(versions.getFirst().storagePath()));
+        assertFalse(hasParts());
+    }
+
     private boolean hasParts() throws IOException {
         Path temp = root.resolve("storage/.tmp");
         if (!Files.exists(temp)) return false;
