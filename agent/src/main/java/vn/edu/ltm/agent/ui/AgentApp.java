@@ -34,8 +34,6 @@ public final class AgentApp extends Application {
     private final AgentSettingsStore settingsStore = new AgentSettingsStore(Path.of(System.getProperty("user.home"), ".ltm-agent"));
     private AgentController controller;
     private final RuntimeSwitch<AgentRuntime> runtimes = new RuntimeSwitch<>();
-    private final ExecutorService shutdown = Executors.newSingleThreadExecutor(
-            Thread.ofPlatform().name("agent-shutdown").factory());
     private AsyncCloseWorkflow closeWorkflow;
     private Stage stage;
     private Timeline refresh;
@@ -52,7 +50,8 @@ public final class AgentApp extends Application {
         catch (Exception failure) { controller.error("Cannot read saved configuration: " + failure.getMessage()); }
         refresh = new Timeline(new KeyFrame(Duration.seconds(1), event -> controller.refresh(model)));
         refresh.setCycleCount(Timeline.INDEFINITE); refresh.play();
-        closeWorkflow = new AsyncCloseWorkflow(shutdown, Platform::runLater, () -> {
+        closeWorkflow = new AsyncCloseWorkflow(() -> Executors.newSingleThreadExecutor(
+                Thread.ofPlatform().name("agent-shutdown").factory()), Platform::runLater, () -> {
             setup.shutdownNow();
             runtimes.close();
             if (!setup.awaitTermination(10, TimeUnit.SECONDS))

@@ -4,29 +4,37 @@ import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /** Non-blocking, retryable shutdown gate for UI close requests. */
 public final class AsyncCloseWorkflow {
     @FunctionalInterface public interface Cleanup { void run() throws Exception; }
 
-    private final ExecutorService background;
+    private final Supplier<ExecutorService> backgroundFactory;
     private final Executor ui;
     private final Cleanup cleanup;
     private final Runnable onClosing;
     private final Runnable onComplete;
     private final Consumer<Throwable> onFailure;
+    private final Runnable beforeFailureDecision;
     private boolean running;
     private boolean complete;
     private boolean forceUntilComplete;
 
-    public AsyncCloseWorkflow(ExecutorService background, Executor ui, Cleanup cleanup, Runnable onClosing,
+    public AsyncCloseWorkflow(Supplier<ExecutorService> backgroundFactory, Executor ui, Cleanup cleanup, Runnable onClosing,
                               Runnable onComplete, Consumer<Throwable> onFailure) {
-        this.background = Objects.requireNonNull(background);
+        this(backgroundFactory, ui, cleanup, onClosing, onComplete, onFailure, () -> { });
+    }
+
+    AsyncCloseWorkflow(Supplier<ExecutorService> backgroundFactory, Executor ui, Cleanup cleanup, Runnable onClosing,
+                       Runnable onComplete, Consumer<Throwable> onFailure, Runnable beforeFailureDecision) {
+        this.backgroundFactory = Objects.requireNonNull(backgroundFactory);
         this.ui = Objects.requireNonNull(ui);
         this.cleanup = Objects.requireNonNull(cleanup);
         this.onClosing = Objects.requireNonNull(onClosing);
         this.onComplete = Objects.requireNonNull(onComplete);
         this.onFailure = Objects.requireNonNull(onFailure);
+        this.beforeFailureDecision = Objects.requireNonNull(beforeFailureDecision);
     }
 
     /** Returns immediately; false means a close is in progress or already complete. */
@@ -34,8 +42,7 @@ public final class AsyncCloseWorkflow {
         if (running || complete) return false;
         running = true;
         onClosing.run();
-        try { background.execute(this::runCleanup); }
-        catch (RuntimeException failure) { fail(failure); }
+        launch();
         return true;
     }
 
@@ -46,20 +53,48 @@ public final class AsyncCloseWorkflow {
         forceUntilComplete = true;
         if (running || complete) return;
         running = true;
-        background.execute(this::runCleanup);
+        launch();
     }
 
-    private void runCleanup() {
+    private void launch() {
+        ExecutorService background = null;
+        try {
+            background = Objects.requireNonNull(backgroundFactory.get());
+            ExecutorService attempt = background;
+            background.execute(() -> runCleanup(attempt));
+        } catch (RuntimeException failure) {
+            if (background != null) background.shutdown();
+            running = false;
+            ui.execute(() -> onFailure.accept(failure));
+        }
+    }
+
+    private void runCleanup(ExecutorService background) {
+        long backoffMillis = 250;
         while (true) {
             try { cleanup.run(); }
             catch (Exception failure) {
                 boolean forced;
-                synchronized (this) { forced = forceUntilComplete; }
-                if (!forced) { fail(failure); return; }
+                synchronized (this) {
+                    forced = forceUntilComplete;
+                    beforeFailureDecision.run();
+                    if (!forced) running = false;
+                }
+                if (!forced) {
+                    background.shutdown();
+                    ui.execute(() -> {
+                        synchronized (this) {
+                            if (forceUntilComplete || running || complete) return;
+                        }
+                        onFailure.accept(failure);
+                    });
+                    return;
+                }
                 System.getLogger(getClass().getName()).log(System.Logger.Level.WARNING,
-                        "Shutdown failed; retrying while application exits", failure);
-                try { Thread.sleep(250); }
+                        "Shutdown failed; retrying while application exits (" + failure.getClass().getSimpleName() + ")");
+                try { Thread.sleep(backoffMillis); }
                 catch (InterruptedException ignored) { Thread.interrupted(); }
+                backoffMillis = Math.min(2_000, backoffMillis * 2);
                 continue;
             }
             synchronized (this) { complete = true; running = false; }
@@ -71,10 +106,5 @@ public final class AsyncCloseWorkflow {
             }
             return;
         }
-    }
-
-    private void fail(Throwable failure) {
-        synchronized (this) { running = false; }
-        ui.execute(() -> onFailure.accept(failure));
     }
 }

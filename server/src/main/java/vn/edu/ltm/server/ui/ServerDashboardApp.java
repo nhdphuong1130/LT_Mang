@@ -28,8 +28,6 @@ import java.util.concurrent.*;
 public final class ServerDashboardApp extends Application {
     private final ExecutorService worker = Executors.newSingleThreadExecutor(
             Thread.ofPlatform().daemon().name("server-admin").factory());
-    private final ExecutorService shutdown = Executors.newSingleThreadExecutor(
-            Thread.ofPlatform().name("server-shutdown").factory());
     private final DashboardViewModel model = new DashboardViewModel(action -> {
         if (Platform.isFxApplicationThread()) action.run(); else Platform.runLater(action);
     });
@@ -42,7 +40,8 @@ public final class ServerDashboardApp extends Application {
     @Override public void start(Stage stage) {
         Platform.setImplicitExit(false);
         this.stage = stage;
-        closeWorkflow = new AsyncCloseWorkflow(shutdown, Platform::runLater, () -> {
+        closeWorkflow = new AsyncCloseWorkflow(() -> Executors.newSingleThreadExecutor(
+                Thread.ofPlatform().name("server-shutdown").factory()), Platform::runLater, () -> {
             stopping = true;
             worker.shutdownNow();
             if (!worker.awaitTermination(10, TimeUnit.SECONDS))
