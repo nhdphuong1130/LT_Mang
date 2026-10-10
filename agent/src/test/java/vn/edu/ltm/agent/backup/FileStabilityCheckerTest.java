@@ -2,6 +2,7 @@ package vn.edu.ltm.agent.backup;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import vn.edu.ltm.agent.TestCapabilities;
 import vn.edu.ltm.common.util.Hashing;
 import java.nio.file.*;
 import java.time.Duration;
@@ -38,6 +39,7 @@ class FileStabilityCheckerTest {
     }
 
     @Test void symlinkReplacementDuringWindowIsRejected() throws Exception {
+        TestCapabilities.assumeSymlinks(root);
         Path file = Files.writeString(root.resolve("file.txt"), "original");
         Path other = Files.writeString(root.resolve("other.txt"), "other");
         var elapsed = new AtomicLong();

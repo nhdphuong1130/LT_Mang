@@ -2,6 +2,7 @@ package vn.edu.ltm.agent.backup;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import vn.edu.ltm.agent.TestCapabilities;
 import vn.edu.ltm.agent.persistence.AgentDatabase;
 import java.nio.file.*;
 import java.time.*;
@@ -11,6 +12,7 @@ class StartupReconcilerTest {
     @TempDir Path temporary;
 
     @Test void scansOnlyEligibleFilesAndRequeuesChangedContentExactlyOnce() throws Exception {
+        TestCapabilities.assumeSymlinks(temporary);
         Path root = Files.createDirectory(temporary.resolve("protected"));
         Path file = Files.writeString(Files.createDirectories(root.resolve("nested")).resolve("file.txt"), "first");
         Files.writeString(Files.createDirectories(root.resolve("Recovered")).resolve("restore.txt"), "restore");

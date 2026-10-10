@@ -3,6 +3,7 @@ package vn.edu.ltm.agent.restore;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import vn.edu.ltm.agent.TestCapabilities;
 import vn.edu.ltm.common.protocol.ControlEnvelope;
 import vn.edu.ltm.common.protocol.MessageType;
 import vn.edu.ltm.common.transfer.FileTransferCodec;
@@ -23,6 +24,7 @@ class RestoreHandlerDirectoryRaceTest {
     @TempDir Path root;
 
     @Test void directoryMovedOutsideDuringCreationNeverReceivesRestoredContent() throws Exception {
+        TestCapabilities.assumeSymlinks(root);
         Path protectedRoot = root.resolve("Protected");
         Files.createDirectory(protectedRoot);
         Path source = root.resolve("source");
@@ -63,6 +65,7 @@ class RestoreHandlerDirectoryRaceTest {
     }
 
     @Test void directoryMovedOutsideAfterPublicationIsRolledBack() throws Exception {
+        TestCapabilities.assumeSymlinks(root);
         Path protectedRoot = root.resolve("Protected");
         Files.createDirectory(protectedRoot);
         Path source = root.resolve("source");

@@ -13,6 +13,9 @@
         <dependency><groupId>vn.edu.ltm</groupId><artifactId>common</artifactId></dependency>
         <dependency><groupId>org.xerial</groupId><artifactId>sqlite-jdbc</artifactId></dependency>
         <dependency><groupId>at.favre.lib</groupId><artifactId>bcrypt</artifactId></dependency>
+        <dependency><groupId>org.openjfx</groupId><artifactId>javafx-controls</artifactId><classifier>${javafx.platform}</classifier></dependency>
+        <dependency><groupId>org.openjfx</groupId><artifactId>javafx-fxml</artifactId><classifier>${javafx.platform}</classifier></dependency>
+        <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-simple</artifactId></dependency>
         <dependency>
             <groupId>vn.edu.ltm</groupId><artifactId>agent</artifactId>
             <version>${project.version}</version><scope>test</scope>
@@ -23,4 +26,7 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+    <build><plugins><plugin><groupId>org.openjfx</groupId><artifactId>javafx-maven-plugin</artifactId>
+        <configuration><mainClass>vn.edu.ltm.server.ServerMain</mainClass></configuration>
+    </plugin></plugins></build>
 </project>

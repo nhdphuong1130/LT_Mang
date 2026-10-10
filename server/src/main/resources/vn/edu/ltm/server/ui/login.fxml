@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.control.*?>
+<VBox xmlns:fx="http://javafx.com/fxml" fx:controller="vn.edu.ltm.server.ui.LoginController" spacing="14" alignment="CENTER" styleClass="root-panel">
+  <Label text="LAN Backup Server" styleClass="title"/>
+  <Label text="Administrator sign in"/>
+  <TextField fx:id="usernameField" promptText="Username" maxWidth="300"/>
+  <PasswordField fx:id="passwordField" promptText="Password (at least 12 characters for setup)" maxWidth="300"/>
+  <HBox spacing="10" alignment="CENTER">
+    <Button text="Sign in" onAction="#submitLogin"/>
+    <Button text="Create first administrator" onAction="#createInitialAdmin"/>
+  </HBox>
+  <Label fx:id="messageLabel" wrapText="true"/>
+</VBox>

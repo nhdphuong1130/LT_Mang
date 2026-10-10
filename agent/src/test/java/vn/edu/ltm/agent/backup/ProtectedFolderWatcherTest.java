@@ -2,6 +2,7 @@ package vn.edu.ltm.agent.backup;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import vn.edu.ltm.agent.TestCapabilities;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.concurrent.*;
@@ -37,6 +38,7 @@ class ProtectedFolderWatcherTest {
     }
 
     @Test void excludesRecoveredSymlinksTemporaryFilesAndStopsOnClose() throws Exception {
+        TestCapabilities.assumeSymlinks(root);
         Path recovered = Files.createDirectory(root.resolve("Recovered"));
         Path outside = Files.createTempDirectory("watcher-outside-");
         var events = new LinkedBlockingQueue<Path>();

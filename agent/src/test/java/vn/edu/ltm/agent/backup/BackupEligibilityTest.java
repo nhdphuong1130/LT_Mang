@@ -2,6 +2,8 @@ package vn.edu.ltm.agent.backup;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.Assumptions;
+import vn.edu.ltm.agent.TestCapabilities;
 import java.nio.file.*;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.io.RandomAccessFile;
@@ -38,6 +40,7 @@ class BackupEligibilityTest {
     }
 
     @Test void rejectsFileAndAncestorSymlinksEvenWhenTargetIsInsideRoot() throws Exception {
+        TestCapabilities.assumeSymlinks(temporary);
         Path root = Files.createDirectory(temporary.resolve("root"));
         Path inner = Files.createDirectory(root.resolve("inner"));
         Path file = Files.writeString(inner.resolve("file.txt"), "hello");
@@ -50,6 +53,7 @@ class BackupEligibilityTest {
     }
 
     @Test void rejectsRootReplacedBySymlink() throws Exception {
+        TestCapabilities.assumeSymlinks(temporary);
         Path root = Files.createDirectory(temporary.resolve("root")).toRealPath();
         Path outside = Files.createDirectory(temporary.resolve("outside"));
         Files.writeString(outside.resolve("secret.txt"), "secret");
@@ -59,6 +63,7 @@ class BackupEligibilityTest {
     }
 
     @Test void rejectsUnreadableFile() throws Exception {
+        Assumptions.assumeTrue(Files.getFileStore(temporary).supportsFileAttributeView("posix"), "POSIX permissions unavailable");
         Path root = Files.createDirectory(temporary.resolve("root"));
         Path file = Files.writeString(root.resolve("locked"), "secret");
         Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("---------"));

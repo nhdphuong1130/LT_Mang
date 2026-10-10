@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.control.*?>
+<BorderPane xmlns:fx="http://javafx.com/fxml" fx:controller="vn.edu.ltm.server.ui.DashboardController" styleClass="root-panel">
+  <top><VBox spacing="8"><Label text="LAN Backup Dashboard" styleClass="title"/>
+    <HBox spacing="10"><Label fx:id="countsLabel" text="Loading…"/><Button text="Refresh" onAction="#refresh"/><Button text="Log out" onAction="#logout"/></HBox>
+  </VBox></top>
+  <center><TabPane>
+    <Tab text="Devices" closable="false"><VBox spacing="8"><ListView fx:id="devicesList" VBox.vgrow="ALWAYS"/>
+      <HBox spacing="8"><TextField fx:id="deviceIdField" promptText="Device ID"/><TextField fx:id="displayNameField" promptText="Display name"/>
+        <TextField fx:id="platformField" promptText="Platform"/><Button text="Provision device" onAction="#provision"/></HBox>
+    </VBox></Tab>
+    <Tab text="Incidents" closable="false"><ListView fx:id="incidentsList"/></Tab>
+    <Tab text="Backups" closable="false"><VBox spacing="8"><ListView fx:id="backupsList" VBox.vgrow="ALWAYS"/>
+      <Button fx:id="restoreButton" text="Restore selected version" disable="true" onAction="#restore"/>
+    </VBox></Tab>
+  </TabPane></center>
+  <bottom><Label fx:id="messageLabel" wrapText="true"/></bottom>
+</BorderPane>

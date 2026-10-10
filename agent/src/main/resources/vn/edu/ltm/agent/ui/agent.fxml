@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.control.*?>
+<VBox xmlns:fx="http://javafx.com/fxml" fx:controller="vn.edu.ltm.agent.ui.AgentController" spacing="12" styleClass="root-panel">
+  <Label text="Agent monitoring and backup" styleClass="title"/>
+  <GridPane hgap="10" vgap="8">
+    <Label text="Server host" GridPane.rowIndex="0"/><TextField fx:id="hostField" text="127.0.0.1" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
+    <Label text="Control port" GridPane.rowIndex="1"/><TextField fx:id="controlPortField" text="5050" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
+    <Label text="File port" GridPane.rowIndex="2"/><TextField fx:id="filePortField" text="5051" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
+    <Label text="Device ID" GridPane.rowIndex="3"/><TextField fx:id="deviceIdField" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
+    <Label text="Device token" GridPane.rowIndex="4"/><PasswordField fx:id="tokenField" GridPane.columnIndex="1" GridPane.rowIndex="4"/>
+    <Label text="Protected folder" GridPane.rowIndex="5"/><TextField fx:id="rootField" GridPane.columnIndex="1" GridPane.rowIndex="5"/>
+    <Button text="Browse" onAction="#chooseFolder" GridPane.columnIndex="2" GridPane.rowIndex="5"/>
+  </GridPane>
+  <Button text="Start agent" onAction="#startAgent"/>
+  <Separator/>
+  <Label fx:id="statusLabel" text="Offline" styleClass="status"/>
+  <Label fx:id="metricsLabel" text="CPU N/A  RAM N/A  Disk N/A  Temp N/A  Battery N/A"/>
+  <Label fx:id="queueLabel" text="Pending backups: 0"/>
+  <Label fx:id="messageLabel" wrapText="true"/>
+</VBox>

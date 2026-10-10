@@ -2,6 +2,7 @@ package vn.edu.ltm.server.network;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import vn.edu.ltm.server.TestCapabilities;
 import vn.edu.ltm.agent.restore.RestoreHandler;
 import vn.edu.ltm.common.protocol.*;
 import vn.edu.ltm.common.util.Hashing;
@@ -118,6 +119,7 @@ class RestoreIntegrationTest {
     }
 
     @Test void swappedRecoveredDirectoryCannotRedirectPayloadOutsideProtected() throws Exception {
+        TestCapabilities.assumeSymlinks(root);
         Fixture fixture = fixture();
         Path protectedRoot = root.resolve("Protected");
         Files.createDirectories(protectedRoot);

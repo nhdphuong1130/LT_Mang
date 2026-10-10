@@ -1,0 +1,173 @@
+package vn.edu.ltm.agent.ui;
+
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
+import javafx.application.Application;
+import javafx.application.Platform;
+import javafx.fxml.FXMLLoader;
+import javafx.scene.Scene;
+import javafx.scene.control.Alert;
+import javafx.stage.Stage;
+import javafx.util.Duration;
+import vn.edu.ltm.agent.alert.ConnectionStatusNotifier;
+import vn.edu.ltm.agent.alert.JavaFxAlertSink;
+import vn.edu.ltm.agent.backup.*;
+import vn.edu.ltm.agent.metrics.OshiMetricsCollector;
+import vn.edu.ltm.agent.monitoring.MonitoringCoordinator;
+import vn.edu.ltm.agent.network.ControlClient;
+import vn.edu.ltm.agent.persistence.AgentDatabase;
+import vn.edu.ltm.agent.restore.RestoreHandler;
+import vn.edu.ltm.agent.risk.*;
+import vn.edu.ltm.common.protocol.MessageType;
+
+import java.io.IOException;
+import java.nio.file.Path;
+import java.sql.SQLException;
+import java.time.Clock;
+import java.util.concurrent.*;
+
+public final class AgentApp extends Application {
+    private final ExecutorService setup = Executors.newSingleThreadExecutor(Thread.ofPlatform().daemon().name("agent-setup").factory());
+    private final AgentViewModel model = new AgentViewModel(Platform::runLater);
+    private final AgentSettingsStore settingsStore = new AgentSettingsStore(Path.of(System.getProperty("user.home"), ".ltm-agent"));
+    private AgentController controller;
+    private AgentRuntime runtime;
+    private Timeline refresh;
+    private boolean stopping;
+
+    @Override public void start(Stage stage) throws IOException {
+        var loader = new FXMLLoader(AgentApp.class.getResource("agent.fxml"));
+        var scene = new Scene(loader.load(), 690, 390);
+        scene.getStylesheets().add(AgentApp.class.getResource("agent.css").toExternalForm());
+        controller = loader.getController();
+        controller.setOnStart(this::startRuntime);
+        try { settingsStore.load().ifPresent(controller::load); }
+        catch (Exception failure) { controller.error("Cannot read saved configuration: " + failure.getMessage()); }
+        refresh = new Timeline(new KeyFrame(Duration.seconds(1), event -> controller.refresh(model)));
+        refresh.setCycleCount(Timeline.INDEFINITE); refresh.play();
+        stage.setTitle("LAN Backup Agent"); stage.setScene(scene); stage.show();
+        if (getParameters().getRaw().contains("--smoke")) {
+            var close = new Timeline(new KeyFrame(Duration.seconds(2), event -> stage.close()));
+            close.play();
+        }
+    }
+
+    private void startRuntime(AgentSettings settings) {
+        setup.submit(() -> {
+            AgentRuntime replacement = null;
+            try {
+                settingsStore.save(settings);
+                replacement = new AgentRuntime(settings, model);
+                replacement.start();
+                AgentRuntime previous;
+                synchronized (this) {
+                    if (stopping) { replacement.close(); return; }
+                    previous = runtime;
+                    runtime = replacement;
+                }
+                if (previous != null) previous.close();
+                Platform.runLater(controller::started);
+            } catch (Exception failure) {
+                if (replacement != null) replacement.close();
+                Platform.runLater(() -> controller.error("Cannot start Agent: " + failure.getMessage()));
+            }
+        });
+    }
+
+    @Override public void stop() {
+        if (refresh != null) refresh.stop();
+        AgentRuntime active;
+        synchronized (this) { stopping = true; active = runtime; runtime = null; }
+        setup.shutdownNow();
+        if (active != null) active.close();
+    }
+
+    private static final class AgentRuntime implements AutoCloseable {
+        private final AgentSettings settings;
+        private final AgentViewModel model;
+        private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2,
+                Thread.ofPlatform().daemon().name("agent-backup", 0).factory());
+        private final ExecutorService fileTasks = Executors.newVirtualThreadPerTaskExecutor();
+        private ControlClient control;
+        private MonitoringCoordinator monitoring;
+        private ProtectedFolderWatcher watcher;
+        private volatile boolean closed;
+
+        AgentRuntime(AgentSettings settings, AgentViewModel model) { this.settings = settings; this.model = model; }
+
+        void start() throws IOException, SQLException {
+            Path root = settings.protectedRoot();
+            var database = new AgentDatabase(Path.of(System.getProperty("user.home"), ".ltm-agent", "agent.db"));
+            database.initialize();
+            var queue = new JdbcBackupQueueRepository(database);
+            var stability = new FileStabilityChecker(root);
+            var restore = new RestoreHandler(root, settings.serverHost(), settings.filePort(), settings.deviceId(), settings.token());
+            control = new ControlClient(settings.controlConfig());
+            control.setInboundHandler(message -> {
+                if (message.type() == MessageType.RESTORE_AVAILABLE) fileTasks.submit(() -> {
+                    try { restore.restore(message); }
+                    catch (IOException | RuntimeException failure) {
+                        model.warn("Restore failed: " + failure.getMessage());
+                    }
+                });
+            });
+            var collector = new OshiMetricsCollector();
+            monitoring = new MonitoringCoordinator(settings.deviceId(), control,
+                    () -> { var sample = collector.collect(); model.updateMetrics(sample); return sample; },
+                    new RiskDetector(), new JavaFxAlertSink(), Clock.systemUTC());
+            watcher = new ProtectedFolderWatcher(root);
+            watcher.start(path -> fileTasks.submit(() -> enqueueStable(path, root, stability, queue)));
+            control.start();
+            monitoring.start();
+            fileTasks.submit(() -> {
+                try { new StartupReconciler(root, queue).reconcile(); }
+                catch (IOException | SQLException | InterruptedException failure) {
+                    if (!closed) model.warn("Initial folder scan failed: " + failure.getMessage());
+                }
+            });
+            var worker = new BackupWorker(queue,
+                    new BackupUploader(root, settings.serverHost(), settings.filePort(), settings.deviceId(), settings.token()), root);
+            scheduler.scheduleWithFixedDelay(() -> {
+                if (closed) return;
+                try { worker.runOnce(); }
+                catch (SQLException failure) { model.warn("Backup queue error: " + failure.getMessage()); }
+            }, 3, 3, TimeUnit.SECONDS);
+            var disconnected = new ConnectionStatusNotifier(() -> {
+                model.warn("Server mất liên lạc");
+                Platform.runLater(() -> {
+                    var alert = new Alert(Alert.AlertType.WARNING, "Server mất liên lạc");
+                    alert.setHeaderText("Agent disconnected"); alert.show();
+                });
+            });
+            scheduler.scheduleAtFixedRate(() -> {
+                boolean online = control.isRegistered();
+                disconnected.poll(online);
+                model.setConnected(online);
+                try (var connection = database.openConnection(); var statement = connection.createStatement();
+                     var rows = statement.executeQuery("SELECT COUNT(*) FROM backup_queue WHERE status IN ('PENDING','RETRY')")) {
+                    if (rows.next()) model.setQueued(rows.getInt(1));
+                } catch (SQLException failure) { model.warn("Queue status unavailable"); }
+            }, 0, 1, TimeUnit.SECONDS);
+        }
+
+        private void enqueueStable(Path path, Path root, FileStabilityChecker stability, BackupQueueRepository queue) {
+            try {
+                var stable = stability.awaitStable(path, FileStabilityChecker.DEFAULT_STABLE_FOR, FileStabilityChecker.DEFAULT_TIMEOUT);
+                var eligible = new BackupEligibility().evaluate(root, stable.path());
+                if (eligible.eligible()) queue.enqueueOrUpdate(new BackupCandidate(eligible.relativePath(), stable.size(),
+                        stable.modifiedTime().toInstant(), stable.sha256()));
+            } catch (IOException | InterruptedException | SQLException failure) {
+                if (!closed) model.warn("Could not queue changed file: " + failure.getMessage());
+            }
+        }
+
+        @Override public void close() {
+            closed = true;
+            scheduler.shutdownNow();
+            if (watcher != null) try { watcher.close(); } catch (IOException ignored) { }
+            if (monitoring != null) monitoring.close();
+            if (control != null) control.close();
+            fileTasks.shutdownNow();
+        }
+    }
+}

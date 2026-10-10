@@ -2,6 +2,7 @@ package vn.edu.ltm.server.backup;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import vn.edu.ltm.server.TestCapabilities;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,6 +21,7 @@ class StoragePathResolverTest {
     }
 
     @Test void rejectsSymlinkStorageParent() throws Exception {
+        TestCapabilities.assumeSymlinks(root);
         Path outside = Files.createDirectory(root.resolve("outside"));
         Path storage = Files.createDirectory(root.resolve("storage"));
         Files.createSymbolicLink(storage.resolve("device"), outside);

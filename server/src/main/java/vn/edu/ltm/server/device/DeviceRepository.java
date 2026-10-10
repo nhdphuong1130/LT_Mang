@@ -10,4 +10,5 @@ public interface DeviceRepository {
     List<Device> findAll();
     void markOnline(String deviceId, Instant lastSeen);
     void markOffline(String deviceId);
+    default void markAllOffline() { for (Device device : findAll()) markOffline(device.deviceId()); }
 }
