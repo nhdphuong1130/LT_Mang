@@ -2,6 +2,8 @@ package vn.edu.ltm.server.network;
 
 import vn.edu.ltm.server.backup.BackupService;
 import vn.edu.ltm.server.device.DeviceProvisioningService;
+import vn.edu.ltm.server.restore.RestoreService;
+import vn.edu.ltm.common.transfer.*;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -19,6 +21,7 @@ public final class FileTransferServer implements AutoCloseable {
     private final int requestedPort;
     private final DeviceProvisioningService provisioning;
     private final BackupService backups;
+    private final RestoreService restores;
     private final FileUploadHandler.TempOutputFactory outputFactory;
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
     private final Set<Socket> sockets = ConcurrentHashMap.newKeySet();
@@ -33,10 +36,22 @@ public final class FileTransferServer implements AutoCloseable {
 
     public FileTransferServer(String bindAddress, int port, DeviceProvisioningService provisioning,
                               BackupService backups, FileUploadHandler.TempOutputFactory outputFactory) {
+        this(bindAddress, port, provisioning, backups, null, outputFactory);
+    }
+
+    public FileTransferServer(String bindAddress, int port, DeviceProvisioningService provisioning,
+                              BackupService backups, RestoreService restores) {
+        this(bindAddress, port, provisioning, backups, restores, FileUploadHandler.diskOutput());
+    }
+
+    private FileTransferServer(String bindAddress, int port, DeviceProvisioningService provisioning,
+                              BackupService backups, RestoreService restores,
+                              FileUploadHandler.TempOutputFactory outputFactory) {
         this.bindAddress = bindAddress;
         this.requestedPort = port;
         this.provisioning = provisioning;
         this.backups = backups;
+        this.restores = restores;
         this.outputFactory = outputFactory;
     }
 
@@ -61,7 +76,22 @@ public final class FileTransferServer implements AutoCloseable {
                 Socket socket = listener.accept();
                 sockets.add(socket);
                 workers.submit(() -> {
-                    try { new FileUploadHandler(socket, provisioning, backups, outputFactory).run(); }
+                    try {
+                        socket.setSoTimeout(30_000);
+                        var codec = new FileTransferCodec();
+                        var header = codec.readHeader(socket.getInputStream());
+                        if (header.operation() == FileOperation.BACKUP_UPLOAD)
+                            new FileUploadHandler(socket, provisioning, backups, outputFactory, header).run();
+                        else if (header.operation() == FileOperation.RESTORE_DOWNLOAD && restores != null)
+                            new FileRestoreHandler(socket, header, provisioning, restores).run();
+                        else {
+                            codec.writeResult(socket.getOutputStream(),
+                                    new TransferResult(TransferResult.Status.REJECTED, "Unsupported operation"));
+                            socket.close();
+                        }
+                    } catch (IOException failure) {
+                        try { socket.close(); } catch (IOException ignored) { }
+                    }
                     finally { sockets.remove(socket); }
                 });
             } catch (IOException | java.util.concurrent.RejectedExecutionException failure) {

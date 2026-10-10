@@ -12,6 +12,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /** One owner per device. Socket writes never hold lifecycle locks, so expiry can unblock them. */
 public final class SessionRegistry implements AutoCloseable {
@@ -19,6 +20,7 @@ public final class SessionRegistry implements AutoCloseable {
     private final DeviceRepository devices;
     private final Clock clock;
     private volatile boolean closed;
+    private volatile Consumer<String> onRegistered = deviceId -> { };
 
     public SessionRegistry(DeviceRepository devices) { this(devices, Clock.systemUTC()); }
 
@@ -30,7 +32,9 @@ public final class SessionRegistry implements AutoCloseable {
     /** Caller must authenticate before transferring socket ownership to this registry. */
     public RegistrationResult register(String deviceId, Socket socket) {
         Objects.requireNonNull(socket);
-        return registerCandidate(new AgentSession(deviceId, socket, clock.instant()));
+        var result = registerCandidate(new AgentSession(deviceId, socket, clock.instant()));
+        if (result.accepted()) onRegistered.accept(deviceId);
+        return result;
     }
 
     /** Publishes ownership under the output lock so notifications cannot precede the ACK. */
@@ -38,8 +42,9 @@ public final class SessionRegistry implements AutoCloseable {
             throws IOException {
         Objects.requireNonNull(socket);
         var candidate = new AgentSession(deviceId, socket, clock.instant());
+        RegistrationResult result;
         synchronized (candidate) {
-            var result = registerCandidate(candidate);
+            result = registerCandidate(candidate);
             if (result.accepted()) {
                 try { candidate.send(acknowledgement); }
                 catch (IOException failure) {
@@ -47,9 +52,13 @@ public final class SessionRegistry implements AutoCloseable {
                     throw failure;
                 }
             }
-            return result;
         }
+        if (result.accepted()) onRegistered.accept(deviceId);
+        return result;
     }
+
+    /** Called after registration (and after its ACK, when one is sent). */
+    public void setOnRegistered(Consumer<String> listener) { onRegistered = Objects.requireNonNull(listener); }
 
     private synchronized RegistrationResult registerCandidate(AgentSession candidate) {
         String deviceId = candidate.deviceId();

@@ -22,14 +22,21 @@ public final class FileUploadHandler implements Runnable {
     private final DeviceProvisioningService provisioning;
     private final BackupService backups;
     private final TempOutputFactory outputFactory;
+    private final FileTransferHeader initialHeader;
     private final FileTransferCodec codec = new FileTransferCodec();
 
     public FileUploadHandler(Socket socket, DeviceProvisioningService provisioning, BackupService backups,
                              TempOutputFactory outputFactory) {
+        this(socket, provisioning, backups, outputFactory, null);
+    }
+
+    public FileUploadHandler(Socket socket, DeviceProvisioningService provisioning, BackupService backups,
+                             TempOutputFactory outputFactory, FileTransferHeader initialHeader) {
         this.socket = socket;
         this.provisioning = provisioning;
         this.backups = backups;
         this.outputFactory = outputFactory;
+        this.initialHeader = initialHeader;
     }
 
     @Override public void run() {
@@ -37,7 +44,7 @@ public final class FileUploadHandler implements Runnable {
         try (socket) {
             try {
                 socket.setSoTimeout(30_000);
-                FileTransferHeader header = codec.readHeader(socket.getInputStream());
+                FileTransferHeader header = initialHeader == null ? codec.readHeader(socket.getInputStream()) : initialHeader;
                 if (!provisioning.authenticate(header.deviceId(), header.credential())) {
                     send(TransferResult.Status.REJECTED, "Invalid device credential");
                     return;
