@@ -18,6 +18,7 @@ public sealed record DirectLinkEvent(string Status, string PeerName, string? Dev
 public static class DirectLinkState
 {
     public static DirectLinkEvent Searching(string peer) => new("SEARCHING", peer, null, null);
+    public static DirectLinkEvent Discovered(string peer, string id) => new("DISCOVERED", peer, id, null);
     public static DirectLinkEvent Unavailable(string peer, string message) => new("UNAVAILABLE", peer, null, message);
     public static DirectLinkEvent Connected(string peer, string id) => new("CONNECTED", peer, id, null);
     public static DirectLinkEvent Disconnected(string peer, string id) => new("RECONNECTING", peer, id, "Wi-Fi Direct link disconnected");
@@ -27,6 +28,14 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (args.Contains("--list")) {
+#if WINDOWS
+            return await ListWindowsPeersAsync();
+#else
+            Emit(DirectLinkState.Unavailable("", "Wi-Fi Direct WinRT API is available only on Windows"));
+            return 3;
+#endif
+        }
         string? peerName = Argument(args, "--peer-name");
         if (string.IsNullOrWhiteSpace(peerName)) {
             Console.Error.WriteLine("Usage: WifiDirectAgentHelper.exe --peer-name <Linux peer name>");
@@ -50,6 +59,15 @@ public static class Program
     private static void Emit(DirectLinkEvent value) => Console.Out.WriteLine(value.ToJson());
 
 #if WINDOWS
+    private static async Task<int> ListWindowsPeersAsync()
+    {
+        string selector = WiFiDirectDevice.GetDeviceSelector(WiFiDirectDeviceSelectorType.AssociationEndpoint);
+        DeviceInformationCollection devices = await DeviceInformation.FindAllAsync(selector);
+        foreach (DeviceInformation peer in devices) Emit(DirectLinkState.Discovered(peer.Name, peer.Id));
+        if (devices.Count == 0) Emit(DirectLinkState.Unavailable("", "No discoverable Wi-Fi Direct peer"));
+        return devices.Count == 0 ? 4 : 0;
+    }
+
     private static async Task<int> RunWindowsAsync(string peerName)
     {
         try {

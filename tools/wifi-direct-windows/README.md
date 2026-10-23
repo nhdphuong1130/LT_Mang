@@ -6,8 +6,11 @@ Tiện ích này dùng API WinRT `Windows.Devices.WiFiDirect` để tìm, ghép 
 
 ```powershell
 dotnet publish .\WifiDirectAgentHelper.csproj -c Release -f net10.0-windows10.0.19041.0 -r win-x64 --self-contained true -p:PublishSingleFile=true
+.\bin\Release\net10.0-windows10.0.19041.0\win-x64\publish\WifiDirectAgentHelper.exe --list
 .\bin\Release\net10.0-windows10.0.19041.0\win-x64\publish\WifiDirectAgentHelper.exe --peer-name "LTM-Distance-Server"
 ```
+
+Chạy `--list` trong lúc Linux đang kích hoạt profile P2P, rồi lấy chính xác trường `peerName` được phát hiện để truyền cho `--peer-name`; không giả định tên mẫu `LTM-Distance-Server` luôn đúng.
 
 Chạy trong PowerShell của người dùng đang đăng nhập. Lần đầu Windows có thể yêu cầu xác nhận ghép cặp. Chương trình xuất mỗi trạng thái thành một dòng JSON: `SEARCHING`, `CONNECTED`, `RECONNECTING` hoặc `UNAVAILABLE`.
 
