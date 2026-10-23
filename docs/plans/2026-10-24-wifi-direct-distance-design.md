@@ -45,7 +45,7 @@ Alternatives rejected:
 
 The laptop Server should be the Wi-Fi Direct Group Owner. A Windows Client pairs once with user confirmation and stores the resulting profile. Later Agent launches attempt automatic reconnection.
 
-The first implementation begins with a feasibility spike. It must demonstrate that Linux can remain connected to the infrastructure WLAN while operating as the P2P Group Owner, Windows can remain on the LAN while joining the P2P group, and the Client can read RSSI for the P2P link separately from infrastructure RSSI.
+The first implementation begins with a feasibility spike. It must demonstrate that Linux can remain connected to the infrastructure WLAN while operating as the P2P Group Owner, Windows can remain on the LAN while joining the P2P group, and Linux can read the Client station RSSI from the P2P group interface separately from infrastructure RSSI.
 
 ### 2.3 Reusing Apache Commons Math
 
@@ -70,16 +70,17 @@ The existing `vendor/BLE-RSSI-Proximity-Filter` repository is retained only as h
 ### Agent
 
 - `DirectLinkManager`: observes pairing, connection, reconnection, peer identity, and adapter capability.
-- `DirectRssiCollector`: reads RSSI only from the connected Wi-Fi Direct interface and returns source metadata.
+- `DirectLinkIdentityCollector`: reports the Windows Wi-Fi Direct virtual adapter name, state, and normalized local P2P MAC. It does not report infrastructure RSSI.
 - Monitoring integration: sends direct-link telemetry through the existing LAN metrics channel.
 - Capability/version reporting: lets the Server distinguish an old Agent from a supported Agent whose direct link is temporarily unavailable.
 
-On Windows, a small native/WinRT helper may be required because Java and `netsh wlan show interfaces` alone may not expose the Wi-Fi Direct association independently. The helper is an implementation detail to validate during the feasibility spike.
+On Windows, a small native/WinRT helper may be required for discovery, first-use pairing, and retaining the Wi-Fi Direct session. RSSI collection does not depend on that helper because Linux measures received power at the Server anchor.
 
 ### Server
 
 - `DirectGroupManager`: creates and observes the Linux P2P Group Owner without replacing the normal LAN route.
-- `DirectRssiValidator`: verifies measurement source, peer BSSID/MAC, interface identity, and sample age.
+- `LinuxP2pStationCollector`: reads only P2P group interfaces with `iw dev <interface> station dump` and returns station MAC, signal, interface, and sample time.
+- `DirectRssiValidator`: maps the Agent-reported P2P MAC to a station observed on a P2P group interface and verifies sample age.
 - Per-Client distance estimator: maintains independent Kalman state for every Client.
 - Calibration service: records known-distance measurements and fits shared path-loss parameters.
 - Dashboard: presents direct-link state, raw/filtered RSSI, estimated distance, calibration status, and LAN RTT separately.
@@ -91,10 +92,10 @@ On Windows, a small native/WinRT helper may be required because Java and `netsh 
 3. Agent connects to the Server through the infrastructure LAN.
 4. Server shares the expected P2P group identity over the authenticated control channel.
 5. On first use, Windows asks the user to confirm pairing. Subsequent runs attempt automatic reconnection.
-6. Agent verifies that the P2P virtual adapter is connected to the expected Server peer.
-7. Agent samples direct-link RSSI approximately once per second.
-8. Agent sends the most recent source-labelled sample in its existing five-second metrics update.
-9. Server rejects stale, unverified, infrastructure, or wrong-peer samples.
+6. Agent verifies that its P2P virtual adapter is connected and reports its normalized local P2P MAC over LAN.
+7. Server polls the Linux P2P group interface approximately once per second with `iw station dump`.
+8. Server maps each station MAC to the authenticated Agent identity received over LAN.
+9. Server rejects stale, unverified, infrastructure-interface, or unknown-station samples.
 10. Server applies the per-Client Apache Kalman filter.
 11. Server converts filtered RSSI to an estimated distance using the calibrated log-distance model.
 12. Dashboard updates the Client card and detail panel.
@@ -104,12 +105,13 @@ Telemetry should include at least:
 ```text
 measurementSource = WIFI_DIRECT
 interfaceName
-peerBssid
-rssiDbm
+localP2pMac
 sampledAt
 agentVersion
 capabilities
 ```
+
+The Server enriches this identity with `p2pGroupInterface`, station RSSI, and the station observation time. A top-level RSSI collected from the Client's infrastructure connection is never accepted as physical-distance input.
 
 ## 5. Distance model and evidence
 
@@ -197,7 +199,7 @@ Failure to read independently identified P2P RSSI blocks physical-distance imple
 - Apache Kalman wrapper produces expected results for deterministic RSSI sequences.
 - Calibration regression recovers known synthetic `A` and `n` within tolerance.
 - Distance conversion handles bounds and invalid inputs.
-- Source validation rejects wrong BSSID/interface/source and stale timestamps.
+- Source validation rejects wrong station MAC/interface/source and stale timestamps.
 - Metrics serialization preserves source identity and version/capabilities.
 - Per-Client filters never share state.
 - UI mapping covers every direct-link status.
