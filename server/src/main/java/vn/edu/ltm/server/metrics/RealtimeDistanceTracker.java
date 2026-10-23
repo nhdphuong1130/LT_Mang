@@ -2,6 +2,7 @@ package vn.edu.ltm.server.metrics;
 
 import vn.edu.ltm.common.model.DistanceTelemetry;
 import vn.edu.ltm.common.model.DirectLinkStatus;
+import vn.edu.ltm.common.model.DistanceCalibrationModel;
 import vn.edu.ltm.common.model.KalmanDistanceEstimator;
 
 import java.nio.charset.StandardCharsets;
@@ -28,30 +29,48 @@ public final class RealtimeDistanceTracker {
     public record PingResult(double rttMs, int ttl) { }
 
     private static final class DeviceTrack {
-        final KalmanDistanceEstimator estimator = new KalmanDistanceEstimator();
+        KalmanDistanceEstimator estimator;
+        String calibrationId;
         final AtomicBoolean probing = new AtomicBoolean(false);
         volatile DistanceTelemetry latestTelemetry;
         volatile long lastProbeNanos;
+        synchronized KalmanDistanceEstimator estimatorFor(DistanceCalibrationModel model) {
+            if (estimator == null || !model.id().equals(calibrationId)) {
+                estimator = new KalmanDistanceEstimator(model.referenceRssiAtOneMeter(), model.pathLossExponent());
+                calibrationId = model.id();
+            }
+            return estimator;
+        }
     }
 
     private final Map<String, DeviceTrack> tracks = new ConcurrentHashMap<>();
     private final DirectLinkRegistry directLinks;
     private final Supplier<List<LinuxP2pStationCollector.StationSample>> stationSupplier;
     private final Clock clock;
+    private final Supplier<DistanceCalibrationModel> calibrationSupplier;
     private volatile List<LinuxP2pStationCollector.StationSample> stationSamples = List.of();
     private final AtomicBoolean collectingStations = new AtomicBoolean(false);
     private volatile long lastStationCollectionNanos;
 
     public RealtimeDistanceTracker() {
-        this(new DirectLinkRegistry(), new LinuxP2pStationCollector()::collect, Clock.systemUTC());
+        this(new DirectLinkRegistry(), new LinuxP2pStationCollector()::collect, Clock.systemUTC(),
+                DistanceCalibrationModel::uncalibratedDefault);
     }
 
     public RealtimeDistanceTracker(DirectLinkRegistry directLinks,
                                    Supplier<List<LinuxP2pStationCollector.StationSample>> stationSupplier,
                                    Clock clock) {
+        this(directLinks, stationSupplier, clock, DistanceCalibrationModel::uncalibratedDefault);
+    }
+
+    public RealtimeDistanceTracker(DirectLinkRegistry directLinks,
+                                   Supplier<List<LinuxP2pStationCollector.StationSample>> stationSupplier,
+                                   Clock clock,
+                                   Supplier<DistanceCalibrationModel> calibrationSupplier) {
         this.directLinks = Objects.requireNonNull(directLinks);
         this.stationSupplier = Objects.requireNonNull(stationSupplier);
         this.clock = Objects.requireNonNull(clock);
+        this.calibrationSupplier = Objects.requireNonNull(calibrationSupplier);
     }
 
     public void recordStationSamples(List<LinuxP2pStationCollector.StationSample> samples) {
@@ -64,9 +83,12 @@ public final class RealtimeDistanceTracker {
         DistanceTelemetry updated;
         if (resolution.status() == DirectLinkStatus.CONNECTED && resolution.sample() != null) {
             var sample = resolution.sample();
-            updated = verified(track.estimator.updateFromRssiAndRtt(sample.rssiDbm(), rttMs, ttl), sample);
+            DistanceCalibrationModel model = calibrationSupplier.get();
+            updated = verified(track.estimatorFor(model).updateFromRssiAndRtt(sample.rssiDbm(), rttMs, ttl),
+                    sample, model);
         } else {
-            updated = unavailable(track.estimator.updateFromRttOnly(rttMs, ttl), resolution);
+            DistanceCalibrationModel model = calibrationSupplier.get();
+            updated = unavailable(track.estimatorFor(model).updateFromRttOnly(rttMs, ttl), resolution);
         }
         track.latestTelemetry = updated;
         track.lastProbeNanos = System.nanoTime();
@@ -113,12 +135,13 @@ public final class RealtimeDistanceTracker {
     }
 
     private static DistanceTelemetry verified(DistanceTelemetry base,
-                                               LinuxP2pStationCollector.StationSample sample) {
+                                               LinuxP2pStationCollector.StationSample sample,
+                                               DistanceCalibrationModel model) {
         return new DistanceTelemetry(base.rssiRawDbm(), base.rssiFilteredDbm(), base.signalQualityPercent(),
                 base.estimatedMeters(), base.rttMs(), base.jitterMs(), base.ttl(), base.hopCount(),
                 base.zoneLabel(), base.method(), DistanceTelemetry.VERIFIED_DIRECT_SOURCE,
                 DirectLinkStatus.CONNECTED, sample.interfaceName(), sample.stationMac(), sample.sampledAt(),
-                base.calibrationId(), base.calibrated());
+                model.id(), model.calibrated());
     }
 
     private static DistanceTelemetry unavailable(DistanceTelemetry base, DirectLinkRegistry.Resolution resolution) {

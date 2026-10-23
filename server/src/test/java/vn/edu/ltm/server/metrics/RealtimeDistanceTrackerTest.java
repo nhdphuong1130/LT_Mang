@@ -4,10 +4,12 @@ import org.junit.jupiter.api.Test;
 import vn.edu.ltm.common.model.DistanceTelemetry;
 import vn.edu.ltm.common.model.DirectLinkIdentity;
 import vn.edu.ltm.common.model.DirectLinkStatus;
+import vn.edu.ltm.common.model.DistanceCalibrationModel;
 
 import java.time.*;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -52,5 +54,26 @@ class RealtimeDistanceTrackerTest {
         DistanceTelemetry t = tracker.recordProbe("pc-b", 4.0, 128);
         assertFalse(t.hasPhysicalDistance());
         assertEquals(DirectLinkStatus.AGENT_UPDATE_REQUIRED, t.directLinkStatus());
+    }
+
+    @Test void appliesActiveCalibrationAndResetsFilterWhenModelChanges() {
+        Instant now = Instant.parse("2026-10-24T00:00:00Z");
+        var registry = new DirectLinkRegistry(Clock.fixed(now, ZoneOffset.UTC));
+        registry.update("pc-b", DirectLinkIdentity.connected("Direct", "CC:C5:30:08:CF:12", now,
+                "1.1.0", Set.of("WIFI_DIRECT_IDENTITY_V1")));
+        var model = new AtomicReference<>(new DistanceCalibrationModel("cal-1", now, -50, 2.0, 4, 0.1, 0.1));
+        var tracker = new RealtimeDistanceTracker(registry, List::of, Clock.fixed(now, ZoneOffset.UTC), model::get);
+        tracker.recordStationSamples(List.of(new LinuxP2pStationCollector.StationSample(
+                "p2p-wlp0s20f3-0", "CC:C5:30:08:CF:12", -50, now)));
+        assertEquals("cal-1", tracker.recordProbe("pc-b", 2, 128).calibrationId());
+
+        model.set(new DistanceCalibrationModel("cal-2", now, -60, 2.5, 4, 0.2, 0.3));
+        tracker.recordStationSamples(List.of(new LinuxP2pStationCollector.StationSample(
+                "p2p-wlp0s20f3-0", "CC:C5:30:08:CF:12", -80, now)));
+        var afterChange = tracker.recordProbe("pc-b", 2, 128);
+
+        assertEquals("cal-2", afterChange.calibrationId());
+        assertEquals(-80, afterChange.rssiFilteredDbm(), 0.01);
+        assertTrue(afterChange.calibrated());
     }
 }

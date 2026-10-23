@@ -143,7 +143,10 @@ public final class ServerDashboardApp extends Application {
             var incidents = new JdbcIncidentRepository(database);
             var directLinks = new vn.edu.ltm.server.metrics.DirectLinkRegistry();
             var stationCollector = new vn.edu.ltm.server.metrics.LinuxP2pStationCollector();
-            var distanceTracker = new RealtimeDistanceTracker(directLinks, stationCollector::collect, Clock.systemUTC());
+            var calibrationStore = new vn.edu.ltm.server.metrics.DistanceCalibrationStore(
+                    dataDir.resolve("distance-calibration.properties"));
+            var distanceTracker = new RealtimeDistanceTracker(directLinks, stationCollector::collect,
+                    Clock.systemUTC(), calibrationStore::activeModel);
             data = new DashboardDataService(database, devices, metrics, incidents, sessions, distanceTracker);
             var backups = new BackupService(new JdbcBackupRepository(database), new StoragePathResolver(dataDir.resolve("backup-storage")));
             restores = new RestoreService(new JdbcRestoreJobRepository(database), auth, sessions, Clock.systemUTC(),
