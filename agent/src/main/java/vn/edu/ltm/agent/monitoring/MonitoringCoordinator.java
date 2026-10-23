@@ -27,6 +27,11 @@ public final class MonitoringCoordinator implements AutoCloseable {
     private final Thread outputWorker;
     private ControlEnvelope heartbeat;
     private ControlEnvelope latestMetrics;
+    private volatile DxdiagProfile cachedDxdiag;
+    private volatile DirectLinkIdentity cachedDirectLink;
+    private final java.util.concurrent.atomic.AtomicBoolean collectingDxdiag = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private final java.util.function.Supplier<DxdiagProfile> dxdiagSupplier;
+    private final java.util.function.Supplier<DirectLinkIdentity> directLinkSupplier;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(
             Thread.ofPlatform().daemon().name("agent-monitoring").factory());
     private boolean started;
@@ -34,17 +39,51 @@ public final class MonitoringCoordinator implements AutoCloseable {
 
     public MonitoringCoordinator(String deviceId, ControlClient client, MetricsCollector collector,
                                  RiskDetector detector, AlertSink alerts, Clock clock) {
-        this(deviceId, client::send, collector, detector, alerts, clock);
+        this(deviceId, client::send, collector, detector, alerts, clock,
+                createDefaultDxdiagSupplier(), createDefaultDirectLinkSupplier());
+    }
+    private static java.util.function.Supplier<DxdiagProfile> createDefaultDxdiagSupplier() {
+        var dxCollector = new vn.edu.ltm.agent.metrics.OshiDxdiagCollector();
+        return dxCollector::collect;
+    }
+    private static java.util.function.Supplier<DirectLinkIdentity> createDefaultDirectLinkSupplier() {
+        var directCollector = new vn.edu.ltm.agent.metrics.DirectLinkIdentityCollector();
+        return directCollector::collect;
     }
     public MonitoringCoordinator(String deviceId, Sender sender, MetricsCollector collector,
                                  RiskDetector detector, AlertSink alerts, Clock clock) {
+        this(deviceId, sender, collector, detector, alerts, clock, () -> null, createDefaultDirectLinkSupplier());
+    }
+    public MonitoringCoordinator(String deviceId, Sender sender, MetricsCollector collector,
+                                 RiskDetector detector, AlertSink alerts, Clock clock,
+                                 java.util.function.Supplier<DxdiagProfile> dxdiagSupplier) {
+        this(deviceId, sender, collector, detector, alerts, clock, dxdiagSupplier, createDefaultDirectLinkSupplier());
+    }
+    public MonitoringCoordinator(String deviceId, Sender sender, MetricsCollector collector,
+                                 RiskDetector detector, AlertSink alerts, Clock clock,
+                                 java.util.function.Supplier<DxdiagProfile> dxdiagSupplier,
+                                 java.util.function.Supplier<DirectLinkIdentity> directLinkSupplier) {
         this.deviceId = Objects.requireNonNull(deviceId);
         this.sender = Objects.requireNonNull(sender);
         this.collector = Objects.requireNonNull(collector);
         this.detector = Objects.requireNonNull(detector);
         this.alerts = Objects.requireNonNull(alerts);
         this.clock = Objects.requireNonNull(clock);
+        this.dxdiagSupplier = Objects.requireNonNull(dxdiagSupplier);
+        this.directLinkSupplier = Objects.requireNonNull(directLinkSupplier);
         outputWorker = Thread.ofVirtual().name("agent-monitoring-output").start(this::outputLoop);
+    }
+
+    public synchronized void reportRiskyFile(String relativePath, String reason) {
+        if (closed) return;
+        var event = new RiskEvent(RiskType.RISKY_FILE, RiskEvent.Status.OPEN, clock.instant(),
+                "Risky file blocked [" + relativePath + "]: " + reason);
+        pending.put(RiskType.RISKY_FILE, event);
+        try { alerts.show(event); }
+        catch (RuntimeException failure) {
+            System.getLogger(getClass().getName()).log(System.Logger.Level.WARNING, "Local alert dispatch failed");
+        }
+        if (outputReady.availablePermits() == 0) outputReady.release();
     }
 
     public synchronized void start() {
@@ -82,6 +121,51 @@ public final class MonitoringCoordinator implements AutoCloseable {
             else payload.put("temperatureCelsius", metrics.temperatureCelsius());
             if (metrics.batteryPercent() == null) payload.putNull("batteryPercent");
             else payload.put("batteryPercent", metrics.batteryPercent());
+            if (cachedDxdiag == null && !started) {
+                try { cachedDxdiag = dxdiagSupplier.get(); } catch (RuntimeException ignored) { }
+                try { cachedDirectLink = directLinkSupplier.get(); } catch (RuntimeException ignored) { }
+            } else if (collectingDxdiag.compareAndSet(false, true)) {
+                Thread.ofVirtual().name("agent-dxdiag-refresh").start(() -> {
+                    try {
+                        DirectLinkIdentity directLink = directLinkSupplier.get();
+                        if (directLink != null) cachedDirectLink = directLink;
+                        DxdiagProfile updated = dxdiagSupplier.get();
+                        if (updated != null) cachedDxdiag = updated;
+                    } catch (Throwable ignored) {
+                    } finally {
+                        collectingDxdiag.set(false);
+                    }
+                });
+            }
+            if (cachedDirectLink != null) {
+                payload.put("agentVersion", cachedDirectLink.agentVersion());
+                var capabilities = payload.putArray("capabilities");
+                cachedDirectLink.capabilities().stream().sorted().forEach(capabilities::add);
+                var direct = payload.putObject("directLink");
+                direct.put("status", cachedDirectLink.status().name())
+                      .put("interfaceName", cachedDirectLink.interfaceName())
+                      .put("localP2pMac", cachedDirectLink.localP2pMac());
+                if (cachedDirectLink.sampledAt() == null) direct.putNull("sampledAt");
+                else direct.put("sampledAt", cachedDirectLink.sampledAt().toString());
+            }
+            if (cachedDxdiag != null) {
+                var dx = payload.putObject("dxdiag");
+                dx.put("computerName", cachedDxdiag.computerName())
+                  .put("operatingSystem", cachedDxdiag.operatingSystem())
+                  .put("systemManufacturer", cachedDxdiag.systemManufacturer())
+                  .put("systemModel", cachedDxdiag.systemModel())
+                  .put("biosVersion", cachedDxdiag.biosVersion())
+                  .put("processor", cachedDxdiag.processor())
+                  .put("memory", cachedDxdiag.memory())
+                  .put("pageFileOrSwap", cachedDxdiag.pageFileOrSwap())
+                  .put("directXOrKernelVersion", cachedDxdiag.directXOrKernelVersion())
+                  .put("gpuName", cachedDxdiag.gpuName())
+                  .put("gpuVendor", cachedDxdiag.gpuVendor())
+                  .put("gpuVram", cachedDxdiag.gpuVram())
+                  .put("displayInfo", cachedDxdiag.displayInfo())
+                  .put("diskSummary", cachedDxdiag.diskSummary())
+                  .put("networkSummary", cachedDxdiag.networkSummary());
+            }
             latestMetrics = envelope(MessageType.METRICS, payload);
         } finally {
             // A collection failure must not suppress a heartbeat. One wakeup is enough.

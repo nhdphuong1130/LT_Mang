@@ -12,6 +12,50 @@ import java.util.concurrent.atomic.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class MonitoringCoordinatorTest {
+    @Test void reportsDirectAdapterIdentityInsteadOfInfrastructureRssi() throws Exception {
+        var sent = new LinkedBlockingQueue<ControlEnvelope>();
+        Clock clock = Clock.fixed(Instant.parse("2026-10-24T00:00:00Z"), ZoneOffset.UTC);
+        var direct = DirectLinkIdentity.connected("Local Area Connection* 1", "CC-C5-30-08-CF-12",
+                clock.instant(), "1.1.0", Set.of("WIFI_DIRECT_IDENTITY_V1"));
+        try (var coordinator = new MonitoringCoordinator("pc-n", sent::add,
+                () -> new SystemMetrics(clock.instant(), 1, 2, 3, null, null, false),
+                new RiskDetector(), event -> { }, clock, () -> null, () -> direct)) {
+            coordinator.sample();
+
+            var metrics = take(sent, 2).stream()
+                    .filter(message -> message.type() == MessageType.METRICS)
+                    .findFirst().orElseThrow();
+            assertFalse(metrics.payload().has("rssiDbm"));
+            assertEquals("CONNECTED", metrics.payload().path("directLink").path("status").asText());
+            assertEquals("CC:C5:30:08:CF:12", metrics.payload().path("directLink").path("localP2pMac").asText());
+            assertEquals("1.1.0", metrics.payload().path("agentVersion").asText());
+            assertEquals("WIFI_DIRECT_IDENTITY_V1",
+                    metrics.payload().path("capabilities").get(0).asText());
+        }
+    }
+
+    @Test void sendsTheProfileCollectedOnThisClientInsteadOfADeviceTemplate() throws Exception {
+        var sent = new LinkedBlockingQueue<ControlEnvelope>();
+        Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
+        var localProfile = new DxdiagProfile(
+                "REAL-PC-B", "Windows 11 build 99999", "Actual vendor", "Actual model",
+                "Actual BIOS", "Actual CPU", "24576 MB RAM", "Actual page file", "DirectX actual",
+                "Actual GPU", "Actual GPU vendor", "Actual VRAM", "Actual display",
+                "Actual disk", "Actual network");
+        try (var coordinator = new MonitoringCoordinator("pc-b", sent::add,
+                () -> new SystemMetrics(clock.instant(), 1, 2, 3, null, null, false),
+                new RiskDetector(), event -> { }, clock, () -> localProfile)) {
+            coordinator.sample();
+
+            var metrics = take(sent, 2).stream()
+                    .filter(message -> message.type() == MessageType.METRICS)
+                    .findFirst().orElseThrow();
+            assertEquals("REAL-PC-B", metrics.payload().path("dxdiag").path("computerName").asText());
+            assertEquals("Actual model", metrics.payload().path("dxdiag").path("systemModel").asText());
+            assertEquals("24576 MB RAM", metrics.payload().path("dxdiag").path("memory").asText());
+        }
+    }
+
     @Test void callerCanWaitForOutputWorkerAfterClosingItsTransport() throws Exception {
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
