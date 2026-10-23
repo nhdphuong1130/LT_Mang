@@ -170,3 +170,85 @@ Sau khi build, các file jar thực thi độc lập (executable uber-jar) sẽ 
 1. **Môi trường triển khai LAN**: Hệ thống thiết kế cho mạng cục bộ; kênh TCP truyền tải nội bộ không mã hóa TLS lớp truyền tải mà sử dụng xác thực khóa băm SHA-256, token định danh và bcrypt. Trong môi trường mạng công cộng mở, cần thiết lập VPN hoặc đường hầm SSH/TLS.
 2. **Quyền sở hữu tập tin cục bộ**: Cơ chế chống tráo đổi symlink bảo vệ ứng dụng khỏi các hành vi chuyển hướng thư mục, nhưng giả định rằng tiến trình cục bộ độc hại không có đặc quyền root/superuser ngang quyền sở hữu file với Agent.
 3. **Cảm biến nhiệt độ và pin**: Một số máy bàn hoặc máy ảo không có chip đo nhiệt độ hoặc pin; các giá trị này sẽ hiển thị `N/A` theo đúng đặc tả kỹ thuật.
+
+---
+
+## 8. Đo khoảng cách Server–Client bằng Wi-Fi Direct
+
+Tính năng này dùng hai liên kết song song:
+
+- **LAN hiện tại** tiếp tục truyền heartbeat, metrics, dxdiag và file qua cổng 5050/5051.
+- **Wi-Fi Direct** chỉ tạo liên kết radio trực tiếp giữa laptop Server và Client để Server đọc RSSI của đúng Client. Router không phải tâm đo.
+
+RTT của LAN chỉ được hiển thị như thông tin độ trễ; hệ thống không đổi RTT thành mét. Khoảng cách vật lý chỉ xuất hiện khi Server đối chiếu được MAC P2P mà Agent báo với một station trên interface nhóm `p2p-…` của Linux.
+
+### 8.1. Kiểm tra khả năng phần cứng
+
+Trên Linux Server:
+
+```bash
+./scripts/check-wifi-direct-linux.sh
+```
+
+Trên Windows Client, mở PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check-wifi-direct-windows.ps1
+```
+
+Kết quả Windows phải có Microsoft Wi-Fi Direct Virtual Adapter. Adapter ở trạng thái `Disconnected` trước khi ghép cặp là bình thường.
+
+### 8.2. Ghép cặp một lần
+
+Build và chạy helper Windows theo [hướng dẫn riêng](tools/wifi-direct-windows/README.md). Trên Linux, trước tiên chạy dry-run:
+
+```bash
+./scripts/setup-wifi-direct-server.sh wlp0s20f3 CE:C5:30:08:CF:12 ltm-wifi-direct-distance
+```
+
+Sau khi kiểm tra đúng interface và MAC P2P của Windows, thêm `--apply`:
+
+```bash
+./scripts/setup-wifi-direct-server.sh wlp0s20f3 CE:C5:30:08:CF:12 ltm-wifi-direct-distance --apply
+```
+
+Ví dụ `CE:C5:...` phải được thay bằng MAC của **Microsoft Wi-Fi Direct Virtual Adapter đang Up** sau khi helper chạy. Không dùng MAC `CC:C5:...` của card Wi-Fi vật lý; trên máy đã kiểm tra, hai adapter ảo từng xuất hiện với MAC bắt đầu bằng `CE:C5:...` và `C2:C5:...`.
+
+Script chỉ quản lý profile có tiền tố `ltm-wifi-direct-`. Nếu P2P làm mất LAN, script tự gỡ profile vừa tạo và bật lại profile LAN. Dừng liên kết bằng:
+
+```bash
+./scripts/stop-wifi-direct-server.sh ltm-wifi-direct-distance
+```
+
+### 8.3. Xác nhận đúng nguồn RSSI
+
+Giữ Agent và helper chạy trên Windows, sau đó kiểm tra trên Server:
+
+```bash
+iw dev
+iw dev <p2p-group-interface> station dump
+```
+
+MAC station phải trùng `localP2pMac` do Agent báo. Dashboard chỉ hiển thị mét khi nguồn là `WIFI_DIRECT_SERVER_STATION`; RSSI của SSID/router cũ bị bỏ qua.
+
+### 8.4. Hiệu chuẩn có bằng chứng
+
+1. Chọn Client trên Dashboard và bấm **Hiệu chuẩn khoảng cách**.
+2. Đặt khoảng cách thực tế lần lượt tại 1 m, 2 m, 3 m và 5 m.
+3. Mỗi mốc bấm thu đủ 100 mẫu mới. Hệ thống loại mẫu cũ, trùng, sai Client hoặc sai nguồn.
+4. Xuất CSV để lưu bằng chứng thực nghiệm.
+5. Kiểm tra các giá trị `A`, `n`, MAE và RMSE rồi bấm kích hoạt.
+
+Khi chưa hiệu chuẩn, công thức Log-Distance vẫn dùng giá trị tham khảo trung bình `A=-50 dBm`, `n=3.0`, nhưng Dashboard ghi rõ `default-unverified`. RSSI chịu ảnh hưởng bởi hướng anten, vật cản, phản xạ đa đường và môi trường, vì vậy kết quả luôn là ước lượng chứ không phải phép đo chính xác như thước hoặc UWB.
+
+### 8.5. Ý nghĩa trạng thái
+
+| Trạng thái | Ý nghĩa |
+|---|---|
+| `CONNECTED` | MAC Agent đã khớp station trên nhóm Wi-Fi Direct và mẫu còn mới. |
+| `PAIRING` | Đang ghép cặp lần đầu. |
+| `RECONNECTING` | Adapter tồn tại nhưng liên kết trực tiếp đang kết nối lại. |
+| `UNAVAILABLE` | Máy hoặc driver không cung cấp Wi-Fi Direct. |
+| `WRONG_SIGNAL_SOURCE` | Server chưa thấy MAC Client trong nhóm P2P; không được phép hiện mét. |
+| `STALE_SIGNAL` | Định danh hoặc mẫu RSSI đã quá hạn. |
+| `AGENT_UPDATE_REQUIRED` | Agent cũ chưa gửi định danh/capability Wi-Fi Direct; cần chép lại JAR mới. |

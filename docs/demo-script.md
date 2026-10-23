@@ -125,6 +125,29 @@ Tài liệu này hướng dẫn kịch bản thực nghiệm trực tiếp hệ 
    - Mở file trong thư mục `ProtectedFolder/Recovered/...`: Nội dung đúng chính xác là **Phiên bản 1** (*"Bản thảo sơ bộ"*).
    - Đối chiếu SHA-256: Mã băm của file khôi phục trùng khớp 100% với mã băm của Phiên bản 1 trên Server.
 
+### Phần 8: Chứng minh khoảng cách lấy từ laptop Server, không phải router
+
+1. Giữ kết nối LAN trên Server và Client; xác nhận Agent vẫn ONLINE và cổng 5050 còn truy cập được.
+2. Chạy helper Wi-Fi Direct trên Windows Client và kích hoạt profile `ltm-wifi-direct-distance` trên Linux Server theo README.
+3. Trên Server chạy:
+   ```bash
+   iw dev
+   iw dev <p2p-group-interface> station dump
+   ```
+4. Đối chiếu MAC trong `station dump` với MAC Wi-Fi Direct mà Agent gửi. Dashboard phải ghi nguồn `WIFI_DIRECT_SERVER_STATION`.
+5. Tắt riêng profile P2P nhưng giữ LAN. Kết quả mong đợi:
+   - Agent vẫn ONLINE, metrics/dxdiag/backup vẫn chạy qua LAN.
+   - Khoảng cách mét biến mất và trạng thái chuyển sang `WRONG_SIGNAL_SOURCE`, `RECONNECTING` hoặc `STALE_SIGNAL`.
+6. Bật lại P2P. Khi MAC khớp và có mẫu mới, khoảng cách xuất hiện trở lại.
+
+### Phần 9: Hiệu chuẩn và lưu bằng chứng
+
+1. Chọn Client, mở **Hiệu chuẩn khoảng cách**.
+2. Thu đủ 100 mẫu tại từng mốc 1 m, 2 m, 3 m và 5 m; không di chuyển thiết bị trong lúc thu một mốc.
+3. Xuất CSV và ghi lại điều kiện phòng, hướng đặt laptop, băng tần/kênh và vật cản.
+4. Sau khi đủ 400 mẫu, kiểm tra `A`, `n`, MAE, RMSE rồi kích hoạt mô hình.
+5. Di chuyển Client tới một khoảng cách không thuộc tập hiệu chuẩn (ví dụ 2,5 m) để kiểm tra chéo. Trình bày kết quả là **ước lượng RSSI**, không khẳng định độ chính xác tuyệt đối.
+
 ---
 
 ## 3. Bảng Đối Chiếu Ca Kiểm Thử (TC01 – TC17 Matrix)
@@ -148,3 +171,6 @@ Tài liệu này hướng dẫn kịch bản thực nghiệm trực tiếp hệ 
 | **TC15** | Khôi phục an toàn | Phần 7: File vào `Recovered/`, không ghi đè | ĐẠT |
 | **TC16** | Đường dẫn `../` | Tích hợp trong E2E Test: Chặn path traversal | ĐẠT |
 | **TC17** | Một Agent lỗi | E2E Test: Agent hỏng không ảnh hưởng Agent tốt | ĐẠT |
+| **TC18** | LAN và Wi-Fi Direct chạy song song | Tắt P2P nhưng Agent vẫn ONLINE qua LAN | CHỜ THỬ MÁY THẬT |
+| **TC19** | Chặn RSSI router/sai station | P2P mất thì không hiển thị mét | ĐẠT TỰ ĐỘNG; CHỜ XÁC NHẬN RADIO |
+| **TC20** | Hiệu chuẩn 4 mốc | 100 mẫu/mốc, xuất CSV, hiện A/n/MAE/RMSE | ĐẠT TỰ ĐỘNG; CHỜ THỰC NGHIỆM |
