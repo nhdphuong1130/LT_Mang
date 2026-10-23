@@ -39,6 +39,8 @@ class KalmanDistanceEstimatorTest {
         DistanceTelemetry sample = estimator.updateFromRssi(-58.0);
 
         assertTrue(sample.hasPhysicalDistance());
+        assertEquals("WIFI_DIRECT_SERVER_STATION", sample.measurementSource());
+        assertEquals(DirectLinkStatus.CONNECTED, sample.directLinkStatus());
         assertTrue(sample.estimatedMeters() < 2.0,
                 "A strong -58 dBm classroom signal should be classified under 2m: " + sample.estimatedMeters());
         assertEquals("Rất gần (< 2m)", sample.zoneLabel());
