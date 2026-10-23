@@ -24,6 +24,7 @@
         <sqlite.version>3.53.4.0</sqlite.version>
         <bcrypt.version>0.10.2</bcrypt.version>
         <slf4j.version>2.0.20</slf4j.version>
+        <commons-math.version>3.6.1</commons-math.version>
         <junit.version>6.1.3</junit.version>
     </properties>
 
@@ -80,6 +81,11 @@
                 <groupId>org.slf4j</groupId>
                 <artifactId>slf4j-simple</artifactId>
                 <version>${slf4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-math3</artifactId>
+                <version>${commons-math.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.junit.jupiter</groupId>
