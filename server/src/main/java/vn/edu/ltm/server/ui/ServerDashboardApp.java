@@ -21,6 +21,7 @@ import vn.edu.ltm.server.persistence.Database;
 import vn.edu.ltm.server.restore.*;
 import vn.edu.ltm.server.session.SessionRegistry;
 import vn.edu.ltm.common.lifecycle.AsyncCloseWorkflow;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.concurrent.*;
@@ -101,15 +102,16 @@ public final class ServerDashboardApp extends Application {
         if (stopping) return;
         try {
             var loader = new FXMLLoader(ServerDashboardApp.class.getResource("dashboard.fxml"));
-            var scene = new Scene(loader.load(), 920, 640);
+            var scene = new Scene(loader.load(), 1380, 820);
             scene.getStylesheets().add(ServerDashboardApp.class.getResource("dashboard.css").toExternalForm());
             DashboardController controller = loader.getController();
             controller.configure(model, services.data, services.provisioning, services.restores,
-                    services.auth, worker, () -> worker.submit(() -> {
+                    services.auth, services.sessions, services.ansibleSync, worker, () -> worker.submit(() -> {
                         services.auth.logout(); model.logout(); Platform.runLater(this::showLogin);
                     }));
             stage.setScene(scene);
-            refresh = new Timeline(new KeyFrame(Duration.seconds(5), event -> controller.refresh()));
+            stage.setMaximized(true);
+            refresh = new Timeline(new KeyFrame(Duration.seconds(2), event -> controller.refresh()));
             refresh.setCycleCount(Timeline.INDEFINITE); refresh.play();
         } catch (Exception failure) { stage.setScene(new Scene(new Label("Dashboard UI failed: " + failure.getMessage()))); }
     }
@@ -125,6 +127,8 @@ public final class ServerDashboardApp extends Application {
         private final DeviceProvisioningService provisioning;
         private final DashboardDataService data;
         private final RestoreService restores;
+        private final SessionRegistry sessions;
+        private final vn.edu.ltm.server.ansible.AnsibleSyncService ansibleSync;
         private final ControlTcpServer control;
         private final FileTransferServer files;
         private final ServerListeners listeners;
@@ -134,14 +138,24 @@ public final class ServerDashboardApp extends Application {
             devices.markAllOffline();
             provisioning = new DeviceProvisioningService(devices);
             auth = new AdminAuthService(new JdbcAdminUserRepository(database));
-            var sessions = new SessionRegistry(devices);
+            sessions = new SessionRegistry(devices);
             var metrics = new JdbcMetricsRepository(database);
             var incidents = new JdbcIncidentRepository(database);
-            data = new DashboardDataService(database, devices, metrics, incidents);
-            restores = new RestoreService(new JdbcRestoreJobRepository(database), auth, sessions, Clock.systemUTC());
+            var directLinks = new vn.edu.ltm.server.metrics.DirectLinkRegistry();
+            var stationCollector = new vn.edu.ltm.server.metrics.LinuxP2pStationCollector();
+            var distanceTracker = new RealtimeDistanceTracker(directLinks, stationCollector::collect, Clock.systemUTC());
+            data = new DashboardDataService(database, devices, metrics, incidents, sessions, distanceTracker);
             var backups = new BackupService(new JdbcBackupRepository(database), new StoragePathResolver(dataDir.resolve("backup-storage")));
+            restores = new RestoreService(new JdbcRestoreJobRepository(database), auth, sessions, Clock.systemUTC(),
+                    java.time.Duration.ofMinutes(2), backups);
+            restores.setProvisioning(provisioning);
+            Path playbookDir = Files.isDirectory(Path.of("ansible"))
+                    ? Path.of("ansible").toAbsolutePath()
+                    : Path.of(".worktrees/agent-monitoring-backup/ansible").toAbsolutePath();
+            ansibleSync = new vn.edu.ltm.server.ansible.AnsibleSyncService(dataDir, playbookDir, provisioning, restores);
             control = new ControlTcpServer(new ServerConfig(bind, controlPort), provisioning, sessions,
-                    Clock.systemUTC(), new MetricsMessageHandler(metrics, new IncidentService(incidents), sessions));
+                    Clock.systemUTC(), new MetricsMessageHandler(metrics, new IncidentService(incidents), sessions,
+                    devices, distanceTracker, directLinks));
             files = new FileTransferServer(bind, filePort, provisioning, backups, restores);
             listeners = new ServerListeners(new ServerListeners.Listener() {
                 public void start() throws Exception { files.start(); }
