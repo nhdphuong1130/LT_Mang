@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="WifiDirectAgentHelper.csproj" />
+  <Project Path="WifiDirectAgentHelper.Tests/WifiDirectAgentHelper.Tests.csproj" />
+</Solution>

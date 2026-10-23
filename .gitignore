@@ -11,3 +11,5 @@ backup-storage/
 *.db-shm
 *.db-wal
 *dependency-reduced-pom.xml
+**/bin/
+**/obj/
