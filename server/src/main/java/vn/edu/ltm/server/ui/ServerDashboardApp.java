@@ -106,7 +106,8 @@ public final class ServerDashboardApp extends Application {
             scene.getStylesheets().add(ServerDashboardApp.class.getResource("dashboard.css").toExternalForm());
             DashboardController controller = loader.getController();
             controller.configure(model, services.data, services.provisioning, services.restores,
-                    services.auth, services.sessions, services.ansibleSync, worker, () -> worker.submit(() -> {
+                    services.auth, services.sessions, services.ansibleSync, services.calibrationStore,
+                    worker, () -> worker.submit(() -> {
                         services.auth.logout(); model.logout(); Platform.runLater(this::showLogin);
                     }));
             stage.setScene(scene);
@@ -129,6 +130,7 @@ public final class ServerDashboardApp extends Application {
         private final RestoreService restores;
         private final SessionRegistry sessions;
         private final vn.edu.ltm.server.ansible.AnsibleSyncService ansibleSync;
+        private final DistanceCalibrationStore calibrationStore;
         private final ControlTcpServer control;
         private final FileTransferServer files;
         private final ServerListeners listeners;
@@ -143,7 +145,7 @@ public final class ServerDashboardApp extends Application {
             var incidents = new JdbcIncidentRepository(database);
             var directLinks = new vn.edu.ltm.server.metrics.DirectLinkRegistry();
             var stationCollector = new vn.edu.ltm.server.metrics.LinuxP2pStationCollector();
-            var calibrationStore = new vn.edu.ltm.server.metrics.DistanceCalibrationStore(
+            calibrationStore = new vn.edu.ltm.server.metrics.DistanceCalibrationStore(
                     dataDir.resolve("distance-calibration.properties"));
             var distanceTracker = new RealtimeDistanceTracker(directLinks, stationCollector::collect,
                     Clock.systemUTC(), calibrationStore::activeModel);

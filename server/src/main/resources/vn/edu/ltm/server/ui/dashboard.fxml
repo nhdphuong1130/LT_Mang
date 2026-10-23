@@ -2,17 +2,70 @@
 <?import javafx.scene.layout.*?>
 <?import javafx.scene.control.*?>
 <BorderPane xmlns:fx="http://javafx.com/fxml" fx:controller="vn.edu.ltm.server.ui.DashboardController" styleClass="root-panel">
-  <top><VBox spacing="8"><Label text="LAN Backup Dashboard" styleClass="title"/>
-    <HBox spacing="10"><Label fx:id="countsLabel" text="Loading…"/><Button text="Refresh" onAction="#refresh"/><Button text="Log out" onAction="#logout"/></HBox>
+  <top><VBox spacing="8"><Label text="LAN Backup &amp; NetOp School Classroom Manager" styleClass="title"/>
+    <HBox spacing="10" alignment="CENTER_LEFT">
+      <Label fx:id="countsLabel" text="Loading…"/>
+      <Button text="Refresh" onAction="#refresh"/>
+      <Button fx:id="radarTopButton" text="🎯 Radar Khoảng cách Realtime (Kalman)" onAction="#openRadarDialog"/>
+      <Button fx:id="calibrationTopButton" text="📏 Hiệu chuẩn khoảng cách" onAction="#openCalibrationDialog"/>
+      <Button fx:id="ansibleTopButton" text="⚙ Ansible: Khởi tạo &amp; Đồng bộ File cho tất cả Client" onAction="#runAnsibleSyncAll"/>
+      <Button text="Log out" onAction="#logout"/>
+    </HBox>
   </VBox></top>
   <center><TabPane>
-    <Tab text="Devices" closable="false"><VBox spacing="8"><ListView fx:id="devicesList" VBox.vgrow="ALWAYS"/>
-      <HBox spacing="8"><TextField fx:id="deviceIdField" promptText="Device ID"/><TextField fx:id="displayNameField" promptText="Display name"/>
-        <TextField fx:id="platformField" promptText="Platform"/><Button text="Provision device" onAction="#provision"/></HBox>
+    <Tab text="Devices (Khối cầu &amp; dxdiag)" closable="false"><VBox spacing="8">
+      <SplitPane dividerPositions="0.55" VBox.vgrow="ALWAYS">
+        <VBox spacing="6">
+          <Label text="Sơ đồ Khối cầu Client — Chọn máy để xem đầy đủ bên phải, nhấp đúp để mở dxdiag" wrapText="true" styleClass="section-header"/>
+          <ScrollPane fitToWidth="true" VBox.vgrow="ALWAYS" styleClass="sphere-scroll">
+            <FlowPane fx:id="sphereContainer" hgap="20" vgap="18" styleClass="sphere-flow"/>
+          </ScrollPane>
+          <Label text="Danh sách thiết bị chi tiết:"/>
+          <ListView fx:id="devicesList" prefHeight="105"/>
+        </VBox>
+        <VBox spacing="8" styleClass="dxdiag-panel">
+          <Label fx:id="dxdiagTitleLabel" text="Thông tin phần cứng dxdiag (Windows &amp; Linux)" styleClass="section-header"/>
+          <TextArea fx:id="dxdiagSummaryArea" editable="false" wrapText="true" VBox.vgrow="ALWAYS" styleClass="dxdiag-area"/>
+          <VBox spacing="6" styleClass="permission-box">
+            <Label text="Phân quyền &amp; Hạn chế Client (NetOp School):" styleClass="section-header"/>
+            <HBox spacing="12" alignment="CENTER_LEFT">
+              <CheckBox fx:id="allowBackupCheck" text="Cho phép Backup lên Server" selected="true"/>
+              <CheckBox fx:id="allowRestoreCheck" text="Cho phép Nhận file từ Server" selected="true"/>
+            </HBox>
+            <HBox spacing="8" alignment="CENTER_LEFT">
+              <Button fx:id="savePermButton" text="Lưu phân quyền Client" onAction="#savePermissions"/>
+              <Button fx:id="openDxdiagButton" text="🖥 Xem dxdiag (3 Tab)" onAction="#openDxdiagDialog"/>
+              <Button fx:id="openRadarButton" text="🎯 Radar Khoảng cách" onAction="#openRadarDialog"/>
+              <Button fx:id="isolateButton" text="Cô lập / Bỏ cô lập máy" onAction="#toggleIsolation"/>
+            </HBox>
+          </VBox>
+        </VBox>
+      </SplitPane>
+      <HBox spacing="8" alignment="CENTER_LEFT">
+        <TextField fx:id="deviceIdField" promptText="Device ID"/>
+        <TextField fx:id="displayNameField" promptText="Display name"/>
+        <TextField fx:id="platformField" promptText="Platform (Windows/Linux)"/>
+        <Button text="Provision device" onAction="#provision"/>
+      </HBox>
     </VBox></Tab>
-    <Tab text="Incidents" closable="false"><ListView fx:id="incidentsList"/></Tab>
-    <Tab text="Backups" closable="false"><VBox spacing="8"><ListView fx:id="backupsList" VBox.vgrow="ALWAYS"/>
-      <Button fx:id="restoreButton" text="Restore selected version" disable="true" onAction="#restore"/>
+    <Tab text="Incidents (Cảnh báo 80% &amp; File rủi ro)" closable="false"><ListView fx:id="incidentsList"/></Tab>
+    <Tab text="Backups &amp; Broadcast (Truyền file 1-Nhiều)" closable="false"><VBox spacing="8">
+      <Label fx:id="selectedFolderLabel" text="Select a device folder on the left to filter backups"/>
+      <SplitPane dividerPositions="0.38" VBox.vgrow="ALWAYS">
+        <TreeView fx:id="backupTree" showRoot="false"/>
+        <VBox spacing="8"><ListView fx:id="backupsList" VBox.vgrow="ALWAYS"/></VBox>
+      </SplitPane>
+      <HBox spacing="10" alignment="CENTER_LEFT">
+        <Label text="Máy nhận (Target):"/>
+        <ComboBox fx:id="targetDeviceCombo" promptText="Chọn máy nhận"/>
+        <Button fx:id="restoreButton" text="Gửi file đã chọn sang Máy nhận" disable="true" onAction="#restore"/>
+        <Button fx:id="restoreFolderButton" text="Gửi cả Folder đang chọn sang Máy nhận" disable="true" onAction="#restoreFolder"/>
+      </HBox>
+      <HBox spacing="10" alignment="CENTER_LEFT">
+        <Button fx:id="broadcastAllButton" text="📢 Copy file đang chọn cho TẤT CẢ Client" disable="true" onAction="#broadcastSelectedFileToAll"/>
+        <Button fx:id="sendLocalFileButton" text="📂 Chọn file từ Server gửi cho nhiều Client..." onAction="#sendServerFileToMultipleClients"/>
+        <Button fx:id="ansibleSyncButton" text="⚙ Ansible: Khởi tạo &amp; Đồng bộ File văn bản cho tất cả Client" onAction="#runAnsibleSyncAll"/>
+      </HBox>
     </VBox></Tab>
   </TabPane></center>
   <bottom><Label fx:id="messageLabel" wrapText="true"/></bottom>
