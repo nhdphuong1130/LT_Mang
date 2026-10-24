@@ -82,15 +82,8 @@ class MonitoringBackupRestoreE2ETest {
                     return current.isPresent() && current.get().lastSeen().isAfter(initialHeartbeat);
                 }, Duration.ofSeconds(5));
 
-                // 3. Assert Sustained RAM Alert
-                // Normal RAM evaluation records pending at T0
+                // 3. Assert Immediate RAM Alert at the current 80% policy threshold
                 fakeMetrics.set(new SystemMetrics(fakeClock.instant(), 15.0, 95.0, 30.0, 45.0, 95.0, true));
-                agent.sampleMonitoring();
-                assertTrue(alerts.isEmpty(), "First high RAM sample should be pending, not yet OPEN");
-
-                // Advance clock by 16 seconds (>= 15s default ramDuration)
-                fakeClock.advance(Duration.ofSeconds(16));
-                fakeMetrics.set(new SystemMetrics(fakeClock.instant(), 15.0, 96.0, 30.0, 45.0, 95.0, true));
                 agent.sampleMonitoring();
 
                 await(() -> !alerts.isEmpty() && !server.incidents().findAll("device-e2e-1").isEmpty(),

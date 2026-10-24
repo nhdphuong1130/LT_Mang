@@ -15,7 +15,7 @@ Key goals:
    - **Hybrid Kalman Distance Engine**:
      - When direct `rssiDbm` is reported by the Agent, filters `rssiDbm` with a per-device 1D Kalman filter and computes physical distance via Log-Distance Path Loss:
        $$d = 10^{\frac{\text{TxPower} - \text{RSSI}_{\text{Kalman}}}{10 \cdot n}}$$
-     - When a connected Client is running an older `agent.jar` without `rssiDbm`, synthesizes an equivalent indoor Wi-Fi RSSI from live wireless RTT + Jitter (`-42 dBm` baseline at `1 ms` degrading logarithmically with wireless airtime delay and jitter), passes it through the per-device 1D Kalman filter, and computes live distance in meters so all connected clients display real-time distance immediately.
+   - When a connected Client is running an older `agent.jar` without `rssiDbm`, display RTT/Jitter/TTL as network telemetry only and show “waiting for RSSI”; never convert LAN latency into physical metres.
 3. **Classroom-Ready Presentation UI (3D Spheres + `dxdiag` + Interactive Concentric Radar)**:
    - **Sphere Card Badge**: Shows live distance (`📍 ~X.X m | RTT XX ms | -XX dBm`) on each 3D Client Sphere card.
    - **`dxdiag` Inspector & 3-Tab Dialog**: Includes a dedicated `REALTIME DISTANCE & SIGNAL (Kalman Filter)` section showing `Estimated Distance (m)`, `Proximity Zone`, `Filtered RSSI (dBm)`, `Signal Quality (%)`, `Network RTT (ms)`, `Jitter (ms)`, and `Network Hops (TTL)`.
@@ -62,7 +62,7 @@ Key goals:
 ---
 
 ## 3. Error Handling & Testing
-- If a client is `OFFLINE` or unreachable by `ping`, `DistanceTelemetry.offline()` is returned and the sphere is shown at the outer edge of the radar in grey (`OFFLINE`).
+- If a client is `OFFLINE`, `DistanceTelemetry.offline()` is returned. If it is online but has not reported RSSI, the sphere is shown at the outer edge in grey as `ONLINE — Đang chờ RSSI`, not with a fabricated distance.
 - Unit tests:
   - `KalmanDistanceEstimatorTest`: verifies Kalman smoothing reduces RSSI spike variance, calculates accurate distance via Log-Distance Path Loss, and derives hop count from TTL (`64`, `128`, `255`).
   - `RealtimeDistanceTrackerTest`: verifies hybrid estimation from both direct Agent `rssiDbm` and Server RTT/TTL probes.

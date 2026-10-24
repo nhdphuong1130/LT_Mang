@@ -49,6 +49,10 @@ public final class FileUploadHandler implements Runnable {
                     send(TransferResult.Status.REJECTED, "Invalid device credential");
                     return;
                 }
+                if (!provisioning.isBackupAllowed(header.deviceId())) {
+                    send(TransferResult.Status.REJECTED, "Backup disabled by administrator");
+                    return;
+                }
                 try {
                     reservation = backups.acceptUpload(header);
                 } catch (IllegalArgumentException invalid) {

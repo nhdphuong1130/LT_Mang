@@ -6,6 +6,8 @@
 
 **Tech Stack:** Java 21, Maven, Apache Commons Math 3.6.1, Jackson, JavaFX, JUnit 6, Linux `iw`/NetworkManager/wpa_supplicant, Windows Wi-Fi Direct APIs.
 
+**Status (2026-10-24):** Automated Java/.NET tests, packaging, Windows helper publishing, and shell syntax checks pass. Real Windows pairing, P2P station RSSI, calibration, and the end-to-end runtime smoke test remain pending.
+
 ---
 
 ### Task 1: Align the design and add non-destructive capability diagnostics
@@ -333,7 +335,7 @@ The helper discovers the configured Linux peer with `Windows.Devices.WiFiDirect`
 
 ```bash
 dotnet test tools/wifi-direct-windows
-dotnet publish tools/wifi-direct-windows -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+dotnet publish tools/wifi-direct-windows/WifiDirectAgentHelper.csproj -c Release -f net10.0-windows10.0.19041.0 -r win-x64 --self-contained true -p:PublishSingleFile=true
 ```
 
 Expected: tests pass and a Windows executable is produced.

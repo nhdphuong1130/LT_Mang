@@ -62,7 +62,8 @@ public final class SessionRegistry implements AutoCloseable {
 
     private synchronized RegistrationResult registerCandidate(AgentSession candidate) {
         String deviceId = candidate.deviceId();
-        if (closed || !candidate.isOpen() || devices.findById(deviceId).isEmpty()) {
+        var device = devices.findById(deviceId);
+        if (closed || !candidate.isOpen() || device.isEmpty() || device.get().isolated()) {
             return new RegistrationResult(false, null, "Device unavailable");
         }
         var result = new AtomicReference<RegistrationResult>();
@@ -116,6 +117,13 @@ public final class SessionRegistry implements AutoCloseable {
     public void removeIfSame(String deviceId, UUID sessionId) {
         sessions.computeIfPresent(deviceId, (id, session) -> {
             if (!session.sessionId().equals(sessionId)) return session;
+            retire(id, session);
+            return null;
+        });
+    }
+
+    public void disconnect(String deviceId) {
+        sessions.computeIfPresent(deviceId, (id, session) -> {
             retire(id, session);
             return null;
         });

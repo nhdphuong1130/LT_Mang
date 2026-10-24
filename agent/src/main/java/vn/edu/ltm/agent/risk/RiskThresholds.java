@@ -11,7 +11,7 @@ public record RiskThresholds(double cpuPercent, Duration cpuDuration, double ram
             throw new IllegalArgumentException("Invalid risk thresholds");
     }
     public static RiskThresholds defaults() {
-        return new RiskThresholds(90, Duration.ofSeconds(30), 90, Duration.ofSeconds(15), 95, 85, 10);
+        return new RiskThresholds(80, Duration.ZERO, 80, Duration.ZERO, 80, 80, 20);
     }
     private static boolean percentage(double value) { return Double.isFinite(value) && value >= 0 && value <= 100; }
 }

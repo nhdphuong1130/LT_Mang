@@ -42,6 +42,9 @@ class BackupServiceTest {
         assertEquals(5, repo.versions("device", "nested/file.txt").size());
         assertFalse(Files.exists(first));
         assertTrue(repo.versions("device", "nested/file.txt").stream().allMatch(v -> Files.exists(v.storagePath())));
+        Path liveMirror = root.resolve("storage/device/nested/file.txt");
+        assertTrue(Files.exists(liveMirror), "Device folder must contain real relative path file");
+        assertEquals("version-5", Files.readString(liveMirror));
     }
 
     @Test void closedTemporaryFileMustMatchHeaderEvenWhenReportedDigestMatches() throws Exception {

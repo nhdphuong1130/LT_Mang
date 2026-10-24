@@ -1,0 +1,32 @@
+---
+- name: "Khởi tạo và Đồng bộ File Văn bản Chuẩn cho Tất cả Client (NetOp School & Ansible)"
+  hosts: lan_server
+  gather_facts: true
+  vars:
+    sync_dir: "{{ lookup('env', 'HOME') }}/.ltm-server/ansible-sync"
+    sync_file_name: "THONG_BAO_DONG_BO_LAN.txt"
+    custom_message: "Tài liệu khởi tạo tự động bằng Ansible và đồng bộ xuống toàn bộ máy trạm Client (Windows & Linux)."
+  tasks:
+    - name: "1. Đảm bảo thư mục lưu trữ đồng bộ Ansible trên Server tồn tại"
+      ansible.builtin.file:
+        path: "{{ sync_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: "2. Khởi tạo file văn bản đồng bộ chuẩn cho toàn bộ Client"
+      ansible.builtin.copy:
+        dest: "{{ sync_dir }}/{{ sync_file_name }}"
+        mode: "0644"
+        content: |
+          ====================================================================
+          HỆ THỐNG QUẢN LÝ & GIÁM SÁT PHÒNG MÁY NỘI BỘ LAN (NETOP SCHOOL STYLE)
+          FILE ĐỒNG BỘ KHỞI TẠO TỰ ĐỘNG BỞI ANSIBLE PLAYBOOK
+          ====================================================================
+          Thời gian khởi tạo : {{ ansible_date_time.iso8601 }}
+          Máy chủ điều phối  : {{ ansible_hostname }} ({{ ansible_default_ipv4.address | default('10.35.92.13') }})
+          Hệ điều hành hỗ trợ: Windows & Linux (Cross-Platform Agent + dxdiag)
+          Ngưỡng cảnh báo    : CPU / RAM / Disk >= 80% & Kiểm tra File rủi ro
+          --------------------------------------------------------------------
+          NỘI DUNG ĐỒNG BỘ:
+          {{ custom_message }}
+          ====================================================================

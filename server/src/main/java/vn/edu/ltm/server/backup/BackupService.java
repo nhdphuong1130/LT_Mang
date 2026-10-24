@@ -63,6 +63,7 @@ public final class BackupService {
                 Files.deleteIfExists(reservation.finalPath());
                 throw failure;
             }
+            publishLiveFile(header.deviceId(), header.relativePath(), reservation.finalPath());
             for (Path path : removed) {
                 try { Files.deleteIfExists(path); }
                 catch (IOException | SecurityException failure) {
@@ -75,6 +76,58 @@ public final class BackupService {
     }
 
     public void abort(UploadReservation reservation) throws IOException { Files.deleteIfExists(reservation.tempPath()); }
+
+    public synchronized void copyFromAnotherDevice(
+            String targetDeviceId, String relativePath, Path sourceBlob, long fileSize, String sha256)
+            throws IOException, SQLException {
+        if (!Files.isRegularFile(sourceBlob)) return;
+        var existing = repository.versions(targetDeviceId, relativePath);
+        if (!existing.isEmpty() && existing.getFirst().sha256().equals(sha256)) {
+            publishLiveFile(targetDeviceId, relativePath, sourceBlob);
+            return;
+        }
+        Path destVersionPath = paths.resolve(targetDeviceId, relativePath, UUID.randomUUID().toString());
+        paths.ensureParent(destVersionPath);
+        Files.copy(sourceBlob, destVersionPath, StandardCopyOption.REPLACE_EXISTING);
+        java.util.List<Path> removed;
+        try {
+            removed = repository.commitVersion(targetDeviceId, relativePath, fileSize, sha256, destVersionPath);
+        } catch (SQLException failure) {
+            Files.deleteIfExists(destVersionPath);
+            throw failure;
+        }
+        publishLiveFile(targetDeviceId, relativePath, destVersionPath);
+        for (Path path : removed) {
+            try { Files.deleteIfExists(path); } catch (IOException | SecurityException ignored) { }
+        }
+    }
+
+    public synchronized long importServerFile(String targetDeviceId, String relativePath, Path localFile)
+            throws IOException, SQLException {
+        if (!Files.isRegularFile(localFile)) throw new IllegalArgumentException("Source file does not exist: " + localFile);
+        long size = Files.size(localFile);
+        String sha256 = Hashing.sha256(localFile);
+        copyFromAnotherDevice(targetDeviceId, relativePath, localFile, size, sha256);
+        var versions = repository.versions(targetDeviceId, relativePath);
+        if (versions.isEmpty()) throw new IllegalStateException("Could not record imported server file");
+        return versions.getFirst().id();
+    }
+
+    private void publishLiveFile(String deviceId, String relativePath, Path versionFile) throws IOException {
+        Path livePath = paths.resolveLiveFile(deviceId, relativePath);
+        paths.ensureParent(livePath);
+        Path stage = livePath.resolveSibling("." + livePath.getFileName() + "." + UUID.randomUUID() + ".tmp");
+        try {
+            Files.copy(versionFile, stage, StandardCopyOption.REPLACE_EXISTING);
+            try {
+                Files.move(stage, livePath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException unsupported) {
+                Files.move(stage, livePath, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(stage);
+        }
+    }
 
     public record UploadReservation(FileTransferHeader header, Path tempPath, Path finalPath) { }
 }

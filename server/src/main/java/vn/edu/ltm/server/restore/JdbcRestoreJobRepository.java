@@ -31,22 +31,46 @@ public final class JdbcRestoreJobRepository implements RestoreJobRepository {
         }
     }
 
+    @Override public List<Long> latestVersionIdsForFolder(String sourceDeviceId, String pathPrefix) throws SQLException {
+        String prefix = pathPrefix == null ? "" : pathPrefix.strip();
+        var ids = new ArrayList<Long>();
+        try (var connection = database.openConnection(); var query = connection.prepareStatement("""
+                SELECT MAX(v.id), f.relative_path
+                FROM backup_versions v JOIN backup_files f ON f.id = v.file_id
+                WHERE f.device_id = ?
+                GROUP BY f.id, f.relative_path
+                ORDER BY f.relative_path ASC
+                """)) {
+            query.setString(1, sourceDeviceId);
+            try (var rows = query.executeQuery()) {
+                while (rows.next()) {
+                    String rel = rows.getString(2);
+                    if (prefix.isEmpty() || rel.equals(prefix) || rel.startsWith(prefix + "/")) {
+                        ids.add(rows.getLong(1));
+                    }
+                }
+            }
+        }
+        return List.copyOf(ids);
+    }
+
     @Override public void create(RestoreJob job) throws SQLException {
         try (var connection = database.openConnection(); var insert = connection.prepareStatement("""
                 INSERT INTO restore_jobs(id, backup_version_id, device_id, admin_username, relative_path,
                     size_bytes, sha256, storage_path, token_hash, expires_at, status, requested_at)
-                SELECT ?, v.id, f.device_id, ?, f.relative_path, v.size_bytes, v.sha256, v.storage_path,
+                SELECT ?, v.id, ?, ?, f.relative_path, v.size_bytes, v.sha256, v.storage_path,
                     '', ?, 'PENDING', ?
                 FROM backup_versions v JOIN backup_files f ON f.id = v.file_id
-                WHERE v.id = ? AND f.device_id = ?
+                WHERE v.id = ? AND EXISTS (SELECT 1 FROM devices d WHERE d.device_id = ?)
                 """)) {
             insert.setString(1, job.id().toString());
-            insert.setString(2, job.adminUsername());
-            insert.setString(3, SqlTimestamp.format(job.expiresAt()));
-            insert.setString(4, SqlTimestamp.format(job.requestedAt()));
-            insert.setLong(5, job.backupVersionId());
-            insert.setString(6, job.deviceId());
-            if (insert.executeUpdate() != 1) throw new IllegalArgumentException("Backup version is no longer available");
+            insert.setString(2, job.deviceId());
+            insert.setString(3, job.adminUsername());
+            insert.setString(4, SqlTimestamp.format(job.expiresAt()));
+            insert.setString(5, SqlTimestamp.format(job.requestedAt()));
+            insert.setLong(6, job.backupVersionId());
+            insert.setString(7, job.deviceId());
+            if (insert.executeUpdate() != 1) throw new IllegalArgumentException("Backup version or target device is not available");
         }
     }
 

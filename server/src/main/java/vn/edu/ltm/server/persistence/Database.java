@@ -53,7 +53,30 @@ public final class Database {
         }
         migrateLegacyRestoreJobs(schema);
         ensureRestoreColumns();
+        ensureDeviceColumns();
         normalizeRestoreTimestamps();
+    }
+
+    private void ensureDeviceColumns() throws SQLException {
+        var found = new java.util.HashSet<String>();
+        try (var connection = openConnection(); var statement = connection.createStatement();
+             var columns = statement.executeQuery("PRAGMA table_info(devices)")) {
+            while (columns.next()) found.add(columns.getString("name"));
+        }
+        try (var connection = openConnection(); var statement = connection.createStatement()) {
+            if (!found.contains("isolated")) {
+                statement.execute("ALTER TABLE devices ADD COLUMN isolated INTEGER NOT NULL DEFAULT 0");
+            }
+            if (!found.contains("allow_backup")) {
+                statement.execute("ALTER TABLE devices ADD COLUMN allow_backup INTEGER NOT NULL DEFAULT 1");
+            }
+            if (!found.contains("allow_restore")) {
+                statement.execute("ALTER TABLE devices ADD COLUMN allow_restore INTEGER NOT NULL DEFAULT 1");
+            }
+            if (!found.contains("dxdiag_json")) {
+                statement.execute("ALTER TABLE devices ADD COLUMN dxdiag_json TEXT");
+            }
+        }
     }
 
     private void normalizeRestoreTimestamps() throws SQLException {

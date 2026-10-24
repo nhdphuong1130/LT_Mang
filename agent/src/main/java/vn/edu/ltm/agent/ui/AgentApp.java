@@ -42,12 +42,18 @@ public final class AgentApp extends Application {
         Platform.setImplicitExit(false);
         this.stage = stage;
         var loader = new FXMLLoader(AgentApp.class.getResource("agent.fxml"));
-        var scene = new Scene(loader.load(), 690, 390);
+        var scene = new Scene(loader.load(), 880, 520);
         scene.getStylesheets().add(AgentApp.class.getResource("agent.css").toExternalForm());
         controller = loader.getController();
         controller.setOnStart(this::startRuntime);
-        try { settingsStore.load().ifPresent(controller::load); }
-        catch (Exception failure) { controller.error("Cannot read saved configuration: " + failure.getMessage()); }
+        try {
+            settingsStore.load().ifPresent(saved -> {
+                controller.load(saved);
+                if (!getParameters().getRaw().contains("--smoke")) {
+                    startRuntime(saved);
+                }
+            });
+        } catch (Exception failure) { controller.error("Cannot read saved configuration: " + failure.getMessage()); }
         refresh = new Timeline(new KeyFrame(Duration.seconds(1), event -> controller.refresh(model)));
         refresh.setCycleCount(Timeline.INDEFINITE); refresh.play();
         closeWorkflow = new AsyncCloseWorkflow(() -> Executors.newSingleThreadExecutor(
@@ -175,6 +181,13 @@ public final class AgentApp extends Application {
             try {
                 var stable = stability.awaitStable(path, FileStabilityChecker.DEFAULT_STABLE_FOR, FileStabilityChecker.DEFAULT_TIMEOUT);
                 var eligible = new BackupEligibility().evaluate(root, stable.path());
+                if (eligible.risky()) {
+                    model.warn("CẢNH BÁO FILE RỦI RO (Đã chặn): " + eligible.relativePath() + " — " + eligible.reason());
+                    if (monitoring != null) {
+                        monitoring.reportRiskyFile(eligible.relativePath(), eligible.reason());
+                    }
+                    return;
+                }
                 if (eligible.eligible()) queue.enqueueOrUpdate(new BackupCandidate(eligible.relativePath(), stable.size(),
                         stable.modifiedTime().toInstant(), stable.sha256()));
             } catch (IOException | InterruptedException | SQLException failure) {

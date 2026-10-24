@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-09-agent-monitoring-backup-design.md`
 
+**Execution status (2026-10-24):** Implementation and automated verification are complete. Manual Windows/Linux acceptance for TC01–TC17 remains pending; the detailed historical checkboxes below were not used as the execution ledger.
+
 ## Global Constraints
 
 - Support Agent execution on Windows and Linux with Java 21.

@@ -43,21 +43,28 @@ public final class RestoreHandler {
     private final SecureRandom random = new SecureRandom();
     private final DirectoryCreationObserver directoryObserver;
     private final PublicationObserver publicationObserver;
+    private final boolean simulateNullFileKey;
 
     @FunctionalInterface interface DirectoryCreationObserver { void created(Path directory) throws IOException; }
     @FunctionalInterface interface PublicationObserver { void published(Path file) throws IOException; }
 
     public RestoreHandler(Path protectedRoot, String host, int port, String deviceId, String deviceCredential) {
-        this(protectedRoot, host, port, deviceId, deviceCredential, directory -> { }, file -> { });
+        this(protectedRoot, host, port, deviceId, deviceCredential, directory -> { }, file -> { }, false);
     }
 
     RestoreHandler(Path protectedRoot, String host, int port, String deviceId, String deviceCredential,
                    DirectoryCreationObserver directoryObserver) {
-        this(protectedRoot, host, port, deviceId, deviceCredential, directoryObserver, file -> { });
+        this(protectedRoot, host, port, deviceId, deviceCredential, directoryObserver, file -> { }, false);
     }
 
     RestoreHandler(Path protectedRoot, String host, int port, String deviceId, String deviceCredential,
                    DirectoryCreationObserver directoryObserver, PublicationObserver publicationObserver) {
+        this(protectedRoot, host, port, deviceId, deviceCredential, directoryObserver, publicationObserver, false);
+    }
+
+    RestoreHandler(Path protectedRoot, String host, int port, String deviceId, String deviceCredential,
+                   DirectoryCreationObserver directoryObserver, PublicationObserver publicationObserver,
+                   boolean simulateNullFileKey) {
         this.protectedRoot = protectedRoot;
         this.host = host;
         this.port = port;
@@ -65,6 +72,7 @@ public final class RestoreHandler {
         this.deviceCredential = deviceCredential;
         this.directoryObserver = directoryObserver;
         this.publicationObserver = publicationObserver;
+        this.simulateNullFileKey = simulateNullFileKey;
     }
 
     public Path restore(ControlEnvelope offer) throws IOException {
@@ -82,7 +90,8 @@ public final class RestoreHandler {
         Path destination = paths.resolve(protectedRoot, requestedAt, relativePath);
         Path root = protectedRoot.toAbsolutePath().normalize();
         BasicFileAttributes rootBefore = Files.readAttributes(root, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-        if (!rootBefore.isDirectory() || rootBefore.fileKey() == null)
+        Object rootKey = identityOf(root, rootBefore, simulateNullFileKey);
+        if (!rootBefore.isDirectory() || rootKey == null)
             throw new IOException("Protected folder is unavailable");
         Path staging = root.resolve(".restore-" + UUID.randomUUID() + ".part");
         var header = new FileTransferHeader(FileOperation.RESTORE_DOWNLOAD, token, deviceId, deviceCredential,
@@ -95,7 +104,7 @@ public final class RestoreHandler {
             if (initial.status() != TransferResult.Status.READY) throw new IOException(initial.message());
             try {
                 MessageDigest digest = digest();
-                verifyDirectory(root, rootBefore.fileKey());
+                verifyDirectory(root, rootKey, simulateNullFileKey);
                 try (var channel = FileChannel.open(staging, StandardOpenOption.CREATE_NEW,
                         StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
                      var output = Channels.newOutputStream(channel)) {
@@ -104,16 +113,17 @@ public final class RestoreHandler {
                     if (channel.size() != size) throw new IOException("Restore size mismatch");
                     channel.force(true);
                 }
-                verifyDirectory(root, rootBefore.fileKey());
+                verifyDirectory(root, rootKey, simulateNullFileKey);
                 if (!sha256.equals(HexFormat.of().formatHex(digest.digest())))
                     throw new IOException("Restore checksum mismatch");
-                Object stagedKey = Files.readAttributes(staging, BasicFileAttributes.class,
-                        LinkOption.NOFOLLOW_LINKS).fileKey();
+                BasicFileAttributes stagedAttrs = Files.readAttributes(staging, BasicFileAttributes.class,
+                        LinkOption.NOFOLLOW_LINKS);
+                Object stagedKey = fileIdentityOf(staging, stagedAttrs, simulateNullFileKey);
                 if (stagedKey == null) throw new IOException("Staging file has no stable identity");
                 prepareDestinationParent(destination.getParent());
                 if (!paths.resolve(protectedRoot, requestedAt, relativePath).getParent().equals(destination.getParent()))
                     throw new IOException("Restore destination changed");
-                try (var safe = SafeDirectory.open(protectedRoot, destination.getParent())) {
+                try (var safe = SafeDirectory.open(protectedRoot, destination.getParent(), simulateNullFileKey)) {
                     for (int attempt = 0; attempt < 100; attempt++) {
                         safe.revalidate();
                         byte[] suffix = new byte[16];
@@ -122,12 +132,18 @@ public final class RestoreHandler {
                         Path published = destination.resolveSibling(name);
                         try { Files.createLink(published, staging); }
                         catch (FileAlreadyExistsException collision) { continue; }
+                        catch (UnsupportedOperationException | IOException linkUnsupported) {
+                            if (Files.exists(published, LinkOption.NOFOLLOW_LINKS)) continue;
+                            Files.copy(staging, published, java.nio.file.StandardCopyOption.COPY_ATTRIBUTES);
+                        }
                         try {
                             publicationObserver.published(published);
                             safe.revalidate();
-                            if (!stagedKey.equals(Files.readAttributes(published, BasicFileAttributes.class,
-                                    LinkOption.NOFOLLOW_LINKS).fileKey()))
+                            BasicFileAttributes pubAttrs = Files.readAttributes(published, BasicFileAttributes.class,
+                                    LinkOption.NOFOLLOW_LINKS);
+                            if (!stagedKey.equals(fileIdentityOf(published, pubAttrs, simulateNullFileKey)))
                                 throw new IOException("Published file identity changed");
+                            materializeWorkingCopyIfAbsent(root, relativePath, published);
                             codec.writeResult(socket.getOutputStream(), new TransferResult(TransferResult.Status.STORED, "Restored"));
                             return published;
                         } catch (IOException failure) {
@@ -153,9 +169,36 @@ public final class RestoreHandler {
         }
     }
 
-    private static void verifyDirectory(Path path, Object expectedKey) throws IOException {
+    private static void materializeWorkingCopyIfAbsent(Path root, String relativePath, Path published) {
+        try {
+            Path target = root.resolve(relativePath).normalize();
+            if (!target.startsWith(root) || target.equals(root)) return;
+            for (Path part = root; !part.equals(target.getParent()) && target.getParent().startsWith(part); ) {
+                Path rel = part.relativize(target.getParent());
+                part = part.resolve(rel.getName(0));
+                if (Files.isSymbolicLink(part)) return;
+            }
+            if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                Files.createDirectories(target.getParent());
+                Files.copy(published, target);
+            }
+        } catch (IOException ignored) { }
+    }
+
+    private static Object identityOf(Path path, BasicFileAttributes attrs, boolean simulateNullFileKey) throws IOException {
+        if (!simulateNullFileKey && attrs.fileKey() != null) return attrs.fileKey();
+        if (Files.isSymbolicLink(path)) throw new IOException("Symlink in restore directory");
+        return path.toRealPath(LinkOption.NOFOLLOW_LINKS);
+    }
+
+    private static Object fileIdentityOf(Path path, BasicFileAttributes attrs, boolean simulateNullFileKey) {
+        if (!simulateNullFileKey && attrs.fileKey() != null) return attrs.fileKey();
+        return attrs.size() + ":" + attrs.lastModifiedTime().toMillis();
+    }
+
+    private static void verifyDirectory(Path path, Object expectedKey, boolean simulateNullFileKey) throws IOException {
         var attributes = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-        if (!attributes.isDirectory() || !expectedKey.equals(attributes.fileKey()))
+        if (!attributes.isDirectory() || !expectedKey.equals(identityOf(path, attributes, simulateNullFileKey)))
             throw new IOException("Protected directory identity changed");
     }
 
@@ -172,7 +215,8 @@ public final class RestoreHandler {
         for (Path segment : root.relativize(parent)) {
             BasicFileAttributes before = Files.readAttributes(current, BasicFileAttributes.class,
                     LinkOption.NOFOLLOW_LINKS);
-            if (!before.isDirectory() || before.fileKey() == null)
+            Object beforeKey = identityOf(current, before, simulateNullFileKey);
+            if (!before.isDirectory() || beforeKey == null)
                 throw new IOException("Unsafe restore parent");
             Path next = current.resolve(segment);
             try {
@@ -184,7 +228,7 @@ public final class RestoreHandler {
                     LinkOption.NOFOLLOW_LINKS);
             BasicFileAttributes child = Files.readAttributes(next, BasicFileAttributes.class,
                     LinkOption.NOFOLLOW_LINKS);
-            if (!before.fileKey().equals(after.fileKey()) || !child.isDirectory())
+            if (!beforeKey.equals(identityOf(current, after, simulateNullFileKey)) || !child.isDirectory())
                 throw new IOException("Restore directory changed during setup");
             current = next;
         }
@@ -195,15 +239,17 @@ public final class RestoreHandler {
         private final ArrayList<Path> paths = new ArrayList<>();
         private final ArrayList<Object> keys = new ArrayList<>();
         private boolean portableFallback;
+        private boolean simulateNullFileKey;
 
-        static SafeDirectory open(Path protectedRoot, Path parent) throws IOException {
+        static SafeDirectory open(Path protectedRoot, Path parent, boolean simulateNullFileKey) throws IOException {
             var result = new SafeDirectory();
+            result.simulateNullFileKey = simulateNullFileKey;
             Path root = protectedRoot.toAbsolutePath().normalize();
             if (!parent.startsWith(root)) throw new IOException("Restore destination escaped Protected");
             try {
-                DirectoryStream<Path> stream = Files.newDirectoryStream(root);
+                DirectoryStream<Path> stream = simulateNullFileKey ? null : Files.newDirectoryStream(root);
                 if (!(stream instanceof SecureDirectoryStream<?> secure)) {
-                    stream.close();
+                    if (stream != null) stream.close();
                     result.portableFallback = true;
                     result.addPortable(root);
                     Path currentPath = root;
@@ -232,17 +278,19 @@ public final class RestoreHandler {
 
         private void addPortable(Path path) throws IOException {
             var attrs = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-            if (!attrs.isDirectory() || attrs.fileKey() == null)
+            Object key = identityOf(path, attrs, simulateNullFileKey);
+            if (!attrs.isDirectory() || key == null)
                 throw new IOException("Filesystem does not expose stable directory identities");
             paths.add(path);
-            keys.add(attrs.fileKey());
+            keys.add(key);
         }
 
         private void add(Path path, SecureDirectoryStream<Path> stream) throws IOException {
             opened.add(stream);
             paths.add(path);
             var view = stream.getFileAttributeView(BasicFileAttributeView.class);
-            Object key = view == null ? null : view.readAttributes().fileKey();
+            BasicFileAttributes attrs = view == null ? null : view.readAttributes();
+            Object key = attrs == null ? null : identityOf(path, attrs, simulateNullFileKey);
             if (key == null) throw new IOException("Filesystem does not expose stable directory identities");
             keys.add(key);
         }
@@ -251,7 +299,7 @@ public final class RestoreHandler {
             for (int i = 0; i < paths.size(); i++) {
                 BasicFileAttributes attrs = Files.readAttributes(paths.get(i), BasicFileAttributes.class,
                         LinkOption.NOFOLLOW_LINKS);
-                if (!attrs.isDirectory() || !keys.get(i).equals(attrs.fileKey()))
+                if (!attrs.isDirectory() || !keys.get(i).equals(identityOf(paths.get(i), attrs, simulateNullFileKey)))
                     throw new IOException("Restore directory changed during transfer");
             }
         }
@@ -259,15 +307,18 @@ public final class RestoreHandler {
         void deleteIfSame(String name, Object expectedKey) throws IOException {
             try {
                 Object actual;
+                Path target = paths.getLast().resolve(name);
                 if (portableFallback) {
-                    actual = Files.readAttributes(paths.getLast().resolve(name), BasicFileAttributes.class,
-                            LinkOption.NOFOLLOW_LINKS).fileKey();
+                    BasicFileAttributes attrs = Files.readAttributes(target, BasicFileAttributes.class,
+                            LinkOption.NOFOLLOW_LINKS);
+                    actual = fileIdentityOf(target, attrs, simulateNullFileKey);
                 } else {
-                    actual = parent().getFileAttributeView(Path.of(name), BasicFileAttributeView.class,
-                            LinkOption.NOFOLLOW_LINKS).readAttributes().fileKey();
+                    BasicFileAttributes attrs = parent().getFileAttributeView(Path.of(name), BasicFileAttributeView.class,
+                            LinkOption.NOFOLLOW_LINKS).readAttributes();
+                    actual = fileIdentityOf(target, attrs, simulateNullFileKey);
                 }
                 if (!expectedKey.equals(actual)) throw new IOException("Published file was replaced before rollback");
-                if (portableFallback) Files.delete(paths.getLast().resolve(name));
+                if (portableFallback) Files.delete(target);
                 else parent().deleteFile(Path.of(name));
             } catch (java.nio.file.NoSuchFileException ignored) { }
         }

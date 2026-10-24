@@ -357,6 +357,32 @@ class RestoreServiceTest {
         }
     }
 
+    @Test void allowsCrossDeviceTransferAndFolderBatchTransferFromSourceToTargetDevice() throws Exception {
+        Fixture fixture = fixture();
+        fixture.auth().authenticate("admin", "correct password".toCharArray());
+        new DeviceProvisioningService(fixture.devices()).provision("pc-T", "May T", "Linux");
+        try (var sessions = new SessionRegistry(fixture.devices()); var listener = new ServerSocket(0);
+             var agentT = new Socket("127.0.0.1", listener.getLocalPort()); var serverSideT = listener.accept()) {
+            assertTrue(sessions.register("pc-T", serverSideT).accepted());
+            var service = new RestoreService(new JdbcRestoreJobRepository(fixture.database()), fixture.auth(), sessions,
+                    Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofMinutes(2),
+                    new BackupService(new JdbcBackupRepository(fixture.database()), new StoragePathResolver(root.resolve("storage"))));
+            var jobs = service.requestFolderTransfer("device", "", "pc-T", "admin");
+            assertEquals(1, jobs.size());
+            assertEquals("pc-T", jobs.getFirst().deviceId());
+            assertTrue(Files.exists(root.resolve("storage/pc-T/report.txt")),
+                    "Cross-device transfer must also copy file into target device's server folder");
+            assertEquals(1, new JdbcBackupRepository(fixture.database()).versions("pc-T", "report.txt").size());
+            ControlEnvelope offer = new LengthPrefixedJsonCodec().read(agentT.getInputStream());
+            assertEquals(MessageType.RESTORE_AVAILABLE, offer.type());
+            assertEquals("pc-T", offer.deviceId());
+            String token = offer.payload().path("token").asText();
+            var claimed = service.claim(token, "pc-T");
+            assertEquals(fixture.versionId(), claimed.versionId());
+            assertEquals("report.txt", claimed.relativePath());
+        }
+    }
+
     private RestoreService service(Fixture fixture, SessionRegistry sessions, Instant now) {
         return new RestoreService(new JdbcRestoreJobRepository(fixture.database()), fixture.auth(), sessions,
                 Clock.fixed(now, ZoneOffset.UTC));

@@ -25,6 +25,10 @@ public final class AgentSession implements AutoCloseable {
     public String deviceId() { return deviceId; }
     public Instant lastSeen() { return lastSeen; }
     public boolean isOpen() { return !socket.isClosed(); }
+    public String remoteAddress() {
+        var addr = socket.getInetAddress();
+        return addr == null ? null : addr.getHostAddress();
+    }
     void touch(Instant now) { lastSeen = now; }
 
     /** All writes, including registration acknowledgements, use the same session lock. */

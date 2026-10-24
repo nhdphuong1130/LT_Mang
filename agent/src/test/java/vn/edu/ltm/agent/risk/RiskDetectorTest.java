@@ -10,34 +10,31 @@ class RiskDetectorTest {
     final FakeClock clock = new FakeClock();
     final RiskDetector detector = new RiskDetector(RiskThresholds.defaults());
 
-    @Test void cpuRequiresThirtySustainedSecondsAndCanReopen() {
-        assertTrue(evaluate(90, 0, 0, null, null, false).isEmpty());
-        clock.advance(29);
-        assertTrue(evaluate(99, 0, 0, null, null, false).isEmpty());
-        clock.advance(1);
-        assertEvent(evaluate(90, 0, 0, null, null, false), RiskType.HIGH_CPU, RiskEvent.Status.OPEN);
-        clock.advance(5);
+    @Test void defaultThresholdsMatchLatestEightyPercentPolicy() {
+        var defaults = RiskThresholds.defaults();
+        assertEquals(80, defaults.cpuPercent());
+        assertEquals(Duration.ZERO, defaults.cpuDuration());
+        assertEquals(80, defaults.ramPercent());
+        assertEquals(Duration.ZERO, defaults.ramDuration());
+        assertEquals(80, defaults.diskPercent());
+        assertEquals(80, defaults.temperatureCelsius());
+        assertEquals(20, defaults.batteryPercent());
+    }
+
+    @Test void cpuOpensImmediatelyAtEightyPercentAndCanReopen() {
+        assertEvent(evaluate(80, 0, 0, null, null, false), RiskType.HIGH_CPU, RiskEvent.Status.OPEN);
         assertEvent(evaluate(99, 0, 0, null, null, false), RiskType.HIGH_CPU, RiskEvent.Status.UPDATE);
-        assertEvent(evaluate(89, 0, 0, null, null, false), RiskType.HIGH_CPU, RiskEvent.Status.RESOLVED);
-        assertTrue(evaluate(90, 0, 0, null, null, false).isEmpty());
-        clock.advance(30);
-        assertEvent(evaluate(90, 0, 0, null, null, false), RiskType.HIGH_CPU, RiskEvent.Status.OPEN);
+        assertEvent(evaluate(79, 0, 0, null, null, false), RiskType.HIGH_CPU, RiskEvent.Status.RESOLVED);
+        assertEvent(evaluate(80, 0, 0, null, null, false), RiskType.HIGH_CPU, RiskEvent.Status.OPEN);
     }
 
-    @Test void oscillationResetsPendingRamDurationWithoutDuplicateOpens() {
-        assertTrue(evaluate(0, 90, 0, null, null, false).isEmpty());
-        clock.advance(14);
-        assertTrue(evaluate(0, 89, 0, null, null, false).isEmpty());
-        assertTrue(evaluate(0, 91, 0, null, null, false).isEmpty());
-        clock.advance(14);
-        assertTrue(evaluate(0, 90, 0, null, null, false).isEmpty());
-        clock.advance(1);
-        assertEvent(evaluate(0, 90, 0, null, null, false), RiskType.HIGH_RAM, RiskEvent.Status.OPEN);
-        assertEvent(evaluate(0, 91, 0, null, null, false), RiskType.HIGH_RAM, RiskEvent.Status.UPDATE);
+    @Test void ramOpensImmediatelyAtEightyPercentWithoutDuplicateOpens() {
+        assertEvent(evaluate(0, 80, 0, null, null, false), RiskType.HIGH_RAM, RiskEvent.Status.OPEN);
+        assertEvent(evaluate(0, 81, 0, null, null, false), RiskType.HIGH_RAM, RiskEvent.Status.UPDATE);
     }
 
-    @Test void diskTemperatureAndUnpluggedBatteryOpenImmediately() {
-        var events = evaluate(0, 0, 95, 85d, 10d, false);
+    @Test void diskTemperatureAndUnpluggedBatteryOpenImmediatelyAtEightyPercent() {
+        var events = evaluate(0, 0, 80, 80d, 20d, false);
         assertEquals(3, events.size());
         assertTrue(events.stream().allMatch(e -> e.status() == RiskEvent.Status.OPEN));
         var resolved = evaluate(0, 0, 0, null, null, true);

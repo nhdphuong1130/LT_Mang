@@ -39,13 +39,48 @@ public final class DeviceProvisioningService {
         if (deviceId == null || !deviceId.matches("[A-Za-z0-9._-]{1,64}") || token == null
                 || !token.matches("[A-Za-z0-9_-]{43}")) return false;
         var device = devices.findById(deviceId);
-        if (device.isEmpty()) return false;
+        if (device.isEmpty() || device.get().isolated()) return false;
         char[] chars = token.toCharArray();
         try {
             return BCrypt.verifyer().verify(chars, device.get().tokenHash()).verified;
         } finally {
             Arrays.fill(chars, '\0');
         }
+    }
+
+    public void setIsolated(String deviceId, boolean isolated, vn.edu.ltm.server.session.SessionRegistry sessions) {
+        String normalized = normalizeDeviceId(deviceId);
+        devices.setIsolated(normalized, isolated);
+        if (isolated && sessions != null) sessions.disconnect(normalized);
+    }
+
+    public boolean toggleIsolated(String deviceId, vn.edu.ltm.server.session.SessionRegistry sessions) {
+        String normalized = normalizeDeviceId(deviceId);
+        var current = devices.findById(normalized).orElseThrow(() -> new IllegalArgumentException("Device does not exist: " + normalized));
+        boolean next = !current.isolated();
+        setIsolated(normalized, next, sessions);
+        return next;
+    }
+
+    public void setPermissions(String deviceId, boolean allowBackup, boolean allowRestore) {
+        String normalized = normalizeDeviceId(deviceId);
+        devices.setPermissions(normalized, allowBackup, allowRestore);
+    }
+
+    public boolean isBackupAllowed(String deviceId) {
+        if (deviceId == null) return false;
+        var dev = devices.findById(deviceId.trim());
+        return dev.isPresent() && !dev.get().isolated() && dev.get().allowBackup();
+    }
+
+    public boolean isRestoreAllowed(String deviceId) {
+        if (deviceId == null) return false;
+        var dev = devices.findById(deviceId.trim());
+        return dev.isPresent() && !dev.get().isolated() && dev.get().allowRestore();
+    }
+
+    public java.util.List<Device> findAllDevices() {
+        return devices.findAll();
     }
 
     public static String normalizeDeviceId(String deviceId) {

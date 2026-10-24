@@ -28,4 +28,14 @@ class StoragePathResolverTest {
         var resolver = new StoragePathResolver(storage);
         assertThrows(IllegalArgumentException.class, () -> resolver.resolve("device", "a.txt", "version"));
     }
+
+    @Test void resolvesPerDeviceLivePathAndVersionSnapshotWithOriginalFileName() {
+        var resolver = new StoragePathResolver(root);
+        Path live = resolver.resolveLiveFile("pc-vanphong-B", "tai-lieu/bao-cao.txt");
+        assertEquals(root.toAbsolutePath().normalize().resolve("pc-vanphong-B/tai-lieu/bao-cao.txt"), live);
+
+        Path version = resolver.resolve("pc-vanphong-B", "tai-lieu/bao-cao.txt", "v1");
+        assertEquals(root.toAbsolutePath().normalize()
+                .resolve("pc-vanphong-B/.versions/tai-lieu/bao-cao.txt/v1_bao-cao.txt"), version);
+    }
 }

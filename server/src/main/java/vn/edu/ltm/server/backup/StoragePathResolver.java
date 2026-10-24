@@ -14,14 +14,31 @@ public final class StoragePathResolver {
     public Path root() { return root; }
 
     public Path resolve(String deviceId, String relativePath, String versionId) {
-        if (deviceId == null || !deviceId.matches("[A-Za-z0-9._-]{1,64}")
-                || deviceId.equals(".") || deviceId.equals("..")
-                || versionId == null || !versionId.matches("[A-Za-z0-9_-]{1,80}"))
+        validateDeviceId(deviceId);
+        if (versionId == null || !versionId.matches("[A-Za-z0-9_-]{1,80}"))
             throw new IllegalArgumentException("Invalid storage identifier");
         validateRelativePath(relativePath);
-        Path device = root.resolve(deviceId);
-        checkParents(device);
-        return device.resolve(versionId + ".blob");
+        Path versionDir = root.resolve(deviceId).resolve(".versions").resolve(relativePath).normalize();
+        checkParents(versionDir);
+        String fileName = Path.of(relativePath).getFileName().toString();
+        return versionDir.resolve(versionId + "_" + fileName);
+    }
+
+    public Path resolveLiveFile(String deviceId, String relativePath) {
+        validateDeviceId(deviceId);
+        validateRelativePath(relativePath);
+        Path deviceRoot = root.resolve(deviceId).normalize();
+        Path target = deviceRoot.resolve(relativePath).normalize();
+        if (!target.startsWith(deviceRoot)) throw new IllegalArgumentException("Unsafe relative path");
+        checkParents(target.getParent());
+        if (Files.isSymbolicLink(target)) throw new IllegalArgumentException("Symlink storage target");
+        return target;
+    }
+
+    private static void validateDeviceId(String deviceId) {
+        if (deviceId == null || !deviceId.matches("[A-Za-z0-9._-]{1,64}")
+                || deviceId.equals(".") || deviceId.equals(".."))
+            throw new IllegalArgumentException("Invalid storage identifier");
     }
 
     public Path tempPath(String transferId) {
@@ -54,7 +71,8 @@ public final class StoragePathResolver {
                 || path.contains(":") || path.indexOf('\0') >= 0)
             throw new IllegalArgumentException("Unsafe relative path");
         for (String part : path.split("/", -1)) {
-            if (part.isEmpty() || part.equals(".") || part.equals("..") || part.equalsIgnoreCase("Recovered"))
+            if (part.isEmpty() || part.equals(".") || part.equals("..")
+                    || part.equalsIgnoreCase("Recovered") || part.equalsIgnoreCase(".versions"))
                 throw new IllegalArgumentException("Unsafe relative path");
         }
     }

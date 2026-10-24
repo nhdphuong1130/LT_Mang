@@ -135,9 +135,9 @@ Sau khi build, các file jar thực thi độc lập (executable uber-jar) sẽ 
 ### 6.1. Giám sát phần cứng & Cảnh báo nguy cơ
 - Agent thu thập số liệu phần cứng mỗi 5 giây qua thư viện OSHI (CPU, RAM, Ổ đĩa, Pin, Nhiệt độ nếu có).
 - **Cảnh báo cục bộ và gửi sự cố về Server**:
-  - **RAM > 90%** duy trì liên tục trong **15 giây**: Mở sự cố `HIGH_RAM`.
-  - **CPU > 90%** duy trì liên tục trong **30 giây**: Mở sự cố `HIGH_CPU`.
-  - **Ổ đĩa đầy > 95%**, **Nhiệt độ > 85°C**, hoặc **Pin < 10% (không cắm sạc)**: Mở cảnh báo ngay lập tức.
+  - **CPU, RAM hoặc ổ đĩa đạt từ 80%**: Mở cảnh báo ngay lập tức.
+  - **Nhiệt độ đạt từ 80°C**: Mở cảnh báo ngay lập tức.
+  - **Pin còn tối đa 20% và không cắm sạc**: Mở cảnh báo ngay lập tức.
   - Khi chỉ số hạ về mức an toàn, sự cố tự động chuyển sang trạng thái `RESOLVED`.
   - Khi không có cảm biến nhiệt độ phần cứng, hệ thống hiển thị `N/A`, không báo lỗi giả.
 

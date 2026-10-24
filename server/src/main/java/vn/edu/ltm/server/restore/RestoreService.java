@@ -33,20 +33,28 @@ public final class RestoreService {
     private final SessionRegistry sessions;
     private final Clock clock;
     private final Duration claimLease;
+    private final vn.edu.ltm.server.backup.BackupService backups;
+    private volatile vn.edu.ltm.server.device.DeviceProvisioningService provisioning;
     private final SecureRandom random = new SecureRandom();
     private final String leaseOwner = UUID.randomUUID().toString();
 
     public RestoreService(RestoreJobRepository jobs, AdminAuthService auth, SessionRegistry sessions, Clock clock) {
-        this(jobs, auth, sessions, clock, DEFAULT_CLAIM_LEASE);
+        this(jobs, auth, sessions, clock, DEFAULT_CLAIM_LEASE, null);
     }
 
     public RestoreService(RestoreJobRepository jobs, AdminAuthService auth, SessionRegistry sessions, Clock clock,
                           Duration claimLease) {
+        this(jobs, auth, sessions, clock, claimLease, null);
+    }
+
+    public RestoreService(RestoreJobRepository jobs, AdminAuthService auth, SessionRegistry sessions, Clock clock,
+                          Duration claimLease, vn.edu.ltm.server.backup.BackupService backups) {
         this.jobs = Objects.requireNonNull(jobs);
         this.auth = Objects.requireNonNull(auth);
         this.sessions = Objects.requireNonNull(sessions);
         this.clock = Objects.requireNonNull(clock);
         this.claimLease = Objects.requireNonNull(claimLease);
+        this.backups = backups;
         if (claimLease.isZero() || claimLease.isNegative()) throw new IllegalArgumentException("Claim lease must be positive");
         try {
             jobs.recoverExpired(clock.instant());
@@ -61,17 +69,86 @@ public final class RestoreService {
         });
     }
 
+    public void setProvisioning(vn.edu.ltm.server.device.DeviceProvisioningService provisioning) {
+        this.provisioning = provisioning;
+    }
+
     public RestoreJob request(long backupVersionId, String targetDeviceId, String adminUsername) throws SQLException {
         auth.requireAuthenticated(adminUsername);
+        if (targetDeviceId == null || targetDeviceId.isBlank()) throw new IllegalArgumentException("Target device is required");
+        String trimmedTarget = targetDeviceId.trim();
+        if (provisioning != null && !provisioning.isRestoreAllowed(trimmedTarget)) {
+            throw new IllegalStateException("Thiết bị [" + trimmedTarget + "] đang bị hạn chế quyền nhận file hoặc đang bị cô lập");
+        }
         var backup = jobs.backup(backupVersionId).orElseThrow(() -> new IllegalArgumentException("Backup version does not exist"));
-        if (!backup.deviceId().equals(targetDeviceId)) throw new SecurityException("Backup belongs to another device");
         Instant now = clock.instant();
-        var job = new RestoreJob(UUID.randomUUID(), backupVersionId, targetDeviceId, adminUsername,
+        var job = new RestoreJob(UUID.randomUUID(), backupVersionId, trimmedTarget, adminUsername,
                 now.plusSeconds(600), RestoreJob.Status.PENDING, now, null, null);
         jobs.create(job);
-        jobs.audit(now, adminUsername, "RESTORE_REQUEST", targetDeviceId, "job=" + job.id() + ", version=" + backupVersionId);
-        notifyPending(targetDeviceId);
+        if (!backup.deviceId().equals(job.deviceId()) && backups != null) {
+            try {
+                backups.copyFromAnotherDevice(job.deviceId(), backup.relativePath(), backup.storagePath(),
+                        backup.size(), backup.sha256());
+            } catch (IOException failure) {
+                throw new IllegalStateException("Cannot copy backup to target device folder", failure);
+            }
+        }
+        jobs.audit(now, adminUsername, "RESTORE_REQUEST", job.deviceId(),
+                "job=" + job.id() + ", version=" + backupVersionId + ", sourceDevice=" + backup.deviceId());
+        notifyPending(job.deviceId());
         return jobs.find(job.id()).orElseThrow();
+    }
+
+    public java.util.List<RestoreJob> requestBroadcast(
+            long backupVersionId, java.util.List<String> targetDeviceIds, String adminUsername) throws SQLException {
+        auth.requireAuthenticated(adminUsername);
+        if (targetDeviceIds == null || targetDeviceIds.isEmpty()) {
+            throw new IllegalArgumentException("At least one target device is required");
+        }
+        var created = new java.util.ArrayList<RestoreJob>();
+        for (String target : targetDeviceIds) {
+            if (target == null || target.isBlank()) continue;
+            if (provisioning != null && !provisioning.isRestoreAllowed(target.trim())) continue;
+            created.add(request(backupVersionId, target.trim(), adminUsername));
+        }
+        if (created.isEmpty()) {
+            throw new IllegalStateException("Không có thiết bị nào đủ quyền nhận file (tất cả đang bị chặn nhận file hoặc cô lập)");
+        }
+        return java.util.List.copyOf(created);
+    }
+
+    public java.util.List<RestoreJob> broadcastServerLocalFile(
+            java.nio.file.Path localFile, String relativePath, java.util.List<String> targetDeviceIds, String adminUsername)
+            throws SQLException, IOException {
+        auth.requireAuthenticated(adminUsername);
+        if (backups == null) throw new IllegalStateException("BackupService is not configured");
+        var permitted = targetDeviceIds.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(id -> !id.isEmpty())
+                .filter(id -> provisioning == null || provisioning.isRestoreAllowed(id))
+                .distinct()
+                .toList();
+        if (permitted.isEmpty()) {
+            throw new IllegalStateException("Không có thiết bị nào đủ quyền nhận file");
+        }
+        String cleanRelPath = (relativePath == null || relativePath.isBlank())
+                ? localFile.getFileName().toString()
+                : relativePath.trim();
+        long seedVersionId = backups.importServerFile(permitted.getFirst(), cleanRelPath, localFile);
+        return requestBroadcast(seedVersionId, permitted, adminUsername);
+    }
+
+    public java.util.List<RestoreJob> requestFolderTransfer(
+            String sourceDeviceId, String pathPrefix, String targetDeviceId, String adminUsername) throws SQLException {
+        auth.requireAuthenticated(adminUsername);
+        var versionIds = jobs.latestVersionIdsForFolder(sourceDeviceId, pathPrefix);
+        if (versionIds.isEmpty()) throw new IllegalArgumentException("No backup files found in selected folder");
+        var created = new java.util.ArrayList<RestoreJob>();
+        for (long versionId : versionIds) {
+            created.add(request(versionId, targetDeviceId, adminUsername));
+        }
+        return java.util.List.copyOf(created);
     }
 
     public int notifyPending(String deviceId) throws SQLException {

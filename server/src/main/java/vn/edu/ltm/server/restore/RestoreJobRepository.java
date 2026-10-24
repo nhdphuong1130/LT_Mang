@@ -12,6 +12,7 @@ public interface RestoreJobRepository {
     record BackupMetadata(long versionId, String deviceId, String relativePath, long size, String sha256, Path storagePath) { }
     record OfferSnapshot(RestoreJob.Status status, String tokenHash, Instant expiresAt, UUID sessionId) { }
     Optional<BackupMetadata> backup(long versionId) throws SQLException;
+    default List<Long> latestVersionIdsForFolder(String sourceDeviceId, String pathPrefix) throws SQLException { return List.of(); }
     void create(RestoreJob job) throws SQLException;
     BackupMetadata metadata(UUID jobId) throws SQLException;
     Optional<RestoreJob> find(UUID id) throws SQLException;

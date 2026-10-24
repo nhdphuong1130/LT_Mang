@@ -99,4 +99,36 @@ class RestoreHandlerDirectoryRaceTest {
             }
         }
     }
+
+    @Test void restoresWhenFileKeyIsNullOnWindowsAndPlacesMissingTargetFileInProtectedRoot() throws Exception {
+        Path protectedRoot = root.resolve("WinProtected");
+        Files.createDirectory(protectedRoot);
+        Path source = root.resolve("source");
+        Files.writeString(source, "transferred from T");
+        try (var listener = new ServerSocket(0)) {
+            var sender = Thread.ofVirtual().start(() -> {
+                try (var socket = listener.accept()) {
+                    var codec = new FileTransferCodec();
+                    codec.readHeader(socket.getInputStream());
+                    codec.writeResult(socket.getOutputStream(), new TransferResult(TransferResult.Status.READY, "Ready"));
+                    socket.getOutputStream().write(Files.readAllBytes(source));
+                    codec.readResult(socket.getInputStream());
+                } catch (IOException failure) { throw new RuntimeException(failure); }
+            });
+            var payload = JsonNodeFactory.instance.objectNode()
+                    .put("token", "A".repeat(43)).put("relativePath", "sub/test.txt")
+                    .put("sha256", Hashing.sha256(source)).put("size", Files.size(source))
+                    .put("versionId", 1).put("requestedAt", Instant.parse("2026-10-10T00:00:00Z").toString());
+            var offer = new ControlEnvelope(MessageType.RESTORE_AVAILABLE, UUID.randomUUID().toString(), "device", payload);
+            var handler = new RestoreHandler(protectedRoot, "127.0.0.1", listener.getLocalPort(), "device", "credential",
+                    created -> { }, published -> { }, true);
+            Path restored = handler.restore(offer);
+            sender.join(3000);
+            assertTrue(Files.exists(restored));
+            assertEquals("transferred from T", Files.readString(restored));
+            assertTrue(Files.exists(protectedRoot.resolve("sub/test.txt")),
+                    "Transferred file missing in ProtectedRoot should also be materialized directly");
+            assertEquals("transferred from T", Files.readString(protectedRoot.resolve("sub/test.txt")));
+        }
+    }
 }

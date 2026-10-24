@@ -64,4 +64,53 @@ class DeviceProvisioningServiceTest {
         assertThrows(IllegalStateException.class, () -> provisioning.provision("safe._-1", "Other", "Windows"));
         assertTrue(provisioning.authenticate(issued.deviceId(), issued.token()));
     }
+
+    @Test void isolatingDeviceBlocksAuthenticationAndDisconnectsActiveSessionUntilUnisolated() throws Exception {
+        var database = new Database(temp.resolve("server.db"));
+        database.initialize();
+        var repo = new JdbcDeviceRepository(database);
+        var provisioning = new DeviceProvisioningService(repo);
+        var issued = provisioning.provision("pc-B", "May B", "Windows");
+        try (var sessions = new vn.edu.ltm.server.session.SessionRegistry(repo);
+             var listener = new java.net.ServerSocket(0);
+             var agent = new java.net.Socket("127.0.0.1", listener.getLocalPort());
+             var serverSide = listener.accept()) {
+            assertTrue(sessions.register("pc-B", serverSide).accepted());
+            assertTrue(sessions.find("pc-B").isPresent());
+
+            provisioning.setIsolated("pc-B", true, sessions);
+            assertTrue(repo.findById("pc-B").orElseThrow().isolated());
+            assertTrue(sessions.find("pc-B").isEmpty(), "Active session must be disconnected immediately");
+            assertFalse(provisioning.authenticate("pc-B", issued.token()), "Isolated device must not authenticate");
+
+            try (var agent2 = new java.net.Socket("127.0.0.1", listener.getLocalPort());
+                 var serverSide2 = listener.accept()) {
+                assertFalse(sessions.register("pc-B", serverSide2).accepted(), "Isolated device must not register session");
+            }
+
+            provisioning.setIsolated("pc-B", false, sessions);
+            assertFalse(repo.findById("pc-B").orElseThrow().isolated());
+            assertTrue(provisioning.authenticate("pc-B", issued.token()), "Unisolated device can authenticate again");
+        }
+    }
+
+    @Test void persistsPermissionsAndDxdiag() throws Exception {
+        var database = new Database(temp.resolve("server.db"));
+        database.initialize();
+        var repo = new JdbcDeviceRepository(database);
+        var provisioning = new DeviceProvisioningService(repo);
+        provisioning.provision("pc-1", "May 1", "Windows");
+        provisioning.provision("pc-2", "May 2", "Linux");
+        provisioning.provision("pc-blocked", "May 3", "Windows");
+
+        provisioning.setPermissions("pc-blocked", false, false);
+        assertFalse(provisioning.isBackupAllowed("pc-blocked"));
+        assertFalse(provisioning.isRestoreAllowed("pc-blocked"));
+        assertTrue(provisioning.isBackupAllowed("pc-1"));
+        assertTrue(provisioning.isRestoreAllowed("pc-1"));
+
+        var dx = vn.edu.ltm.common.model.DxdiagProfile.unknown("pc-1", "Windows 11");
+        repo.updateDxdiag("pc-1", dx);
+        assertEquals("Windows 11", repo.findById("pc-1").orElseThrow().dxdiag().operatingSystem());
+    }
 }

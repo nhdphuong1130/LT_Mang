@@ -82,6 +82,20 @@ class BackupEligibilityTest {
         }
     }
 
+    @Test void flagsRiskyExecutableExtensionsAndDangerousContentSignatures() throws Exception {
+        Path root = Files.createDirectory(temporary.resolve("root"));
+        for (String name : new String[]{"trojan.exe", "autorun.bat", "payload.ps1", "dropper.sh"}) {
+            Path file = Files.writeString(root.resolve(name), "echo test");
+            var result = eligibility.evaluate(root, file);
+            assertFalse(result.eligible());
+            assertTrue(result.risky(), "Expected risky flag for " + name);
+        }
+        Path riskyDoc = Files.writeString(root.resolve("note.txt"), "This file contains ransomware payload");
+        var docResult = eligibility.evaluate(root, riskyDoc);
+        assertFalse(docResult.eligible());
+        assertTrue(docResult.risky());
+    }
+
     private void rejected(Path root, Path path) {
         var result = eligibility.evaluate(root, path);
         assertFalse(result.eligible(), path.toString());
