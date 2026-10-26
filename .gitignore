@@ -13,3 +13,6 @@ backup-storage/
 *dependency-reduced-pom.xml
 **/bin/
 **/obj/
+/*.jar
+/*.exe
+/Server-Backups
