@@ -53,6 +53,8 @@ public final class RealtimeDistanceTracker {
     private final Map<String, LinuxP2pStationCollector.StationSample> stationSamplesByMac = new ConcurrentHashMap<>();
     private final AtomicBoolean collectingStations = new AtomicBoolean(false);
     private volatile long lastStationCollectionNanos;
+    private final vn.edu.ltm.server.ranging.HybridDistanceFusion fusion;
+    private final Map<String, vn.edu.ltm.server.ranging.RangingSample> latestAcousticSamples = new ConcurrentHashMap<>();
 
     public RealtimeDistanceTracker() {
         this(new DirectLinkRegistry(), new LinuxP2pStationCollector()::collect, Clock.systemUTC(),
@@ -69,10 +71,34 @@ public final class RealtimeDistanceTracker {
                                    Supplier<List<LinuxP2pStationCollector.StationSample>> stationSupplier,
                                    Clock clock,
                                    Supplier<DistanceCalibrationModel> calibrationSupplier) {
+        this(directLinks, stationSupplier, clock, calibrationSupplier, defaultFusion());
+    }
+
+    private static vn.edu.ltm.server.ranging.HybridDistanceFusion defaultFusion() {
+        try {
+            return new vn.edu.ltm.server.ranging.HybridDistanceFusion(
+                    new vn.edu.ltm.common.ranging.AcousticRangingConfigLoader().load());
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to load acoustic ranging config", e);
+        }
+    }
+
+    public RealtimeDistanceTracker(DirectLinkRegistry directLinks,
+                                   Supplier<List<LinuxP2pStationCollector.StationSample>> stationSupplier,
+                                   Clock clock,
+                                   Supplier<DistanceCalibrationModel> calibrationSupplier,
+                                   vn.edu.ltm.server.ranging.HybridDistanceFusion fusion) {
         this.directLinks = Objects.requireNonNull(directLinks);
         this.stationSupplier = Objects.requireNonNull(stationSupplier);
         this.clock = Objects.requireNonNull(clock);
         this.calibrationSupplier = Objects.requireNonNull(calibrationSupplier);
+        this.fusion = Objects.requireNonNull(fusion);
+    }
+
+    public void onAcousticSample(vn.edu.ltm.server.ranging.RangingSample sample) {
+        if (sample != null && sample.deviceId() != null) {
+            latestAcousticSamples.put(sample.deviceId(), sample);
+        }
     }
 
     public void recordStationSamples(List<LinuxP2pStationCollector.StationSample> samples) {
@@ -125,9 +151,10 @@ public final class RealtimeDistanceTracker {
         }
         if (track.latestTelemetry == null) {
             var resolution = directLinks.resolve(deviceId, List.copyOf(stationSamplesByMac.values()));
-            return DistanceTelemetry.waitingFor(resolution.status(), resolution.reason());
+            DistanceTelemetry base = DistanceTelemetry.waitingFor(resolution.status(), resolution.reason());
+            return fusion.fuse(deviceId, latestAcousticSamples.get(deviceId), base, System.currentTimeMillis());
         }
-        return track.latestTelemetry;
+        return fusion.fuse(deviceId, latestAcousticSamples.get(deviceId), track.latestTelemetry, System.currentTimeMillis());
     }
 
     private void scheduleStationCollection() {

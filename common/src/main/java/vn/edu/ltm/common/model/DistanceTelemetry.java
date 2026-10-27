@@ -27,6 +27,7 @@ public record DistanceTelemetry(
         boolean calibrated
 ) {
     public static final String VERIFIED_DIRECT_SOURCE = "WIFI_DIRECT_SERVER_STATION";
+    public static final String ACOUSTIC_SOURCE = "ACOUSTIC_ULTRASONIC";
 
     /** Compatibility constructor for the original ten-field distance model. */
     public DistanceTelemetry(double rssiRawDbm, double rssiFilteredDbm, int signalQualityPercent,
@@ -61,8 +62,8 @@ public record DistanceTelemetry(
 
     public boolean hasPhysicalDistance() {
         return estimatedMeters >= 0.0
-                && VERIFIED_DIRECT_SOURCE.equals(measurementSource)
-                && directLinkStatus == DirectLinkStatus.CONNECTED;
+                && (ACOUSTIC_SOURCE.equals(measurementSource)
+                || (VERIFIED_DIRECT_SOURCE.equals(measurementSource) && directLinkStatus == DirectLinkStatus.CONNECTED));
     }
 
     public String badgeText() {
@@ -73,6 +74,9 @@ public record DistanceTelemetry(
             return rttMs >= 0.0
                     ? String.format(Locale.ROOT, "📍 Chờ RSSI | RTT %.1f ms | %d Hop", rttMs, Math.max(1, hopCount))
                     : "📍 Đang chờ tín hiệu RSSI từ Client";
+        }
+        if (ACOUSTIC_SOURCE.equals(measurementSource)) {
+            return String.format(Locale.ROOT, "📍 ~%.2f m [Âm học] | RTT %.0f ms", estimatedMeters, Math.max(0.0, rttMs));
         }
         return String.format(Locale.ROOT, "📍 ~%.2f m | RTT %.0f ms | %.0f dBm (%d Hop)",
                 estimatedMeters, Math.max(0.0, rttMs), rssiFilteredDbm, Math.max(0, hopCount));

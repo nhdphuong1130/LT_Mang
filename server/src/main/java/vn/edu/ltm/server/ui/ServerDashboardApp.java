@@ -180,7 +180,7 @@ public final class ServerDashboardApp extends Application {
                     sessions::activeDeviceIds,
                     audioEndpoint,
                     rangingConfig,
-                    sample -> {}
+                    distanceTracker::onAcousticSample
             );
             control = new ControlTcpServer(new ServerConfig(bind, controlPort), provisioning, sessions,
                     Clock.systemUTC(), (deviceId, message) -> {
