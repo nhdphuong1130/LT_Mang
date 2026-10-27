@@ -252,3 +252,15 @@ Khi chưa hiệu chuẩn, công thức Log-Distance vẫn dùng giá trị tham 
 | `WRONG_SIGNAL_SOURCE` | Server chưa thấy MAC Client trong nhóm P2P; không được phép hiện mét. |
 | `STALE_SIGNAL` | Định danh hoặc mẫu RSSI đã quá hạn. |
 | `AGENT_UPDATE_REQUIRED` | Agent cũ chưa gửi định danh/capability Wi-Fi Direct; cần chép lại JAR mới. |
+
+---
+
+## 9. Đo khoảng cách vật lý bằng Sóng Siêu Âm Lai (Hybrid Acoustic Ranging)
+
+Hệ thống bổ sung cơ chế đo khoảng cách vật lý hai chiều bằng sóng âm dải siêu âm (Two-Way Ultrasonic Ranging) giữa Server và Agent laptop:
+- **Kênh Âm Học (Chính)**: Sử dụng chirp tuyến tính dải tần 20.5 kHz – 22.5 kHz (hoặc 18.5 kHz – 20 kHz tùy sample rate). Độ trễ hai chiều loại bỏ sự lệch pha đồng hồ mà không cần đồng bộ NTP micro-giây.
+- **Dự phòng Wi-Fi Direct (Fallback)**: Khi tín hiệu âm học bị che khuất, độ tin cậy < 90%, hoặc phần cứng không đáp ứng, hệ thống tự động chuyển sang mô hình Wi-Fi Direct RSSI Kalman. Tuyệt đối không trung bình mù hai nguồn dữ liệu.
+- **Bảo mật & Quyền riêng tư**: **Hoàn toàn không ghi âm hay lưu trữ âm thanh môi trường**. Dữ liệu âm thanh chỉ tồn tại trong bộ đệm RAM vài trăm mili-giây cho phép lọc phối hợp (Matched Filter) rồi tự động giải phóng. Không có bất kỳ byte âm thanh thô nào được gửi qua mạng.
+- **Trạng thái kiểm định thực tế**: Mục tiêu độ chính xác >90% trong sai số 5 cm được kiểm thử bằng bộ dữ liệu độc lập (held-out validation dataset) trên các mốc 0.5m, 1m, 2m, 3m, 5m. Hiện tại khi chưa hoàn tất đo kiểm thực địa trên hai laptop vật lý, trạng thái kỹ thuật được ghi nhận rõ ràng là **chưa thể tuyên bố đạt độ chính xác >90% trên thực địa** (`EXPLICITLY_INCOMPLETE_PENDING_TWO_LAPTOP_BENCHMARK`).
+
+Chi tiết cấu hình, danh sách Audio Mixer, kiểm định phần cứng và quy trình hiệu chuẩn xem tại: [Hướng dẫn cấu hình âm học](docs/acoustic-ranging-setup.md).
