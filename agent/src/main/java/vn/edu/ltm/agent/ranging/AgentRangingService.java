@@ -103,7 +103,8 @@ public final class AgentRangingService implements AutoCloseable {
 
         try {
             double[] referenceChirp = new LinearChirpGenerator(config).generate();
-            double[] captured = endpoint.capture(request.captureDurationMs());
+            int agentCaptureMs = Math.min(request.captureDurationMs(), 400);
+            double[] captured = endpoint.capture(agentCaptureMs);
 
             if (!Objects.equals(activeSessionId.get(), request.sessionId())) {
                 return; // Aborted
@@ -114,21 +115,34 @@ public final class AgentRangingService implements AutoCloseable {
 
             long peerPeakSample = detection.sampleIndex();
             long responseDelaySamples = Math.round((double) request.responseDelayMs() * request.sampleRateHz() / 1000.0);
-            long selfPeakSample = peerPeakSample + responseDelaySamples;
-
-            // Transmit response chirp
-            endpoint.play(referenceChirp);
 
             double leakageDb = AudioHardwareGate.measureAudibleLeakageDb(captured,
                     request.sampleRateHz(), config.audibleCeilingHz());
 
             RangingStatus status;
+            long selfPeakSample;
             if (leakageDb > config.maxAudibleLeakageDb()) {
                 status = RangingStatus.AUDIBLE_LEAKAGE;
+                selfPeakSample = peerPeakSample + responseDelaySamples;
             } else if (!detection.accepted()) {
                 status = (detection.snrDb() < config.minSnrDb()) ? RangingStatus.LOW_SNR : RangingStatus.MULTIPATH_AMBIGUOUS;
+                selfPeakSample = peerPeakSample + responseDelaySamples;
             } else {
                 status = RangingStatus.ACOUSTIC_READY;
+                // Wait for scheduled turnaround timing, then emit response chirp
+                long elapsedSinceStart = captured.length;
+                long targetSample = peerPeakSample + responseDelaySamples;
+                long waitSamples = targetSample - elapsedSinceStart;
+                if (waitSamples > 0) {
+                    long waitMs = waitSamples * 1000L / request.sampleRateHz();
+                    if (waitMs > 0 && waitMs < 1000) {
+                        try {
+                            Thread.sleep(waitMs);
+                        } catch (InterruptedException ignored) {}
+                    }
+                }
+                endpoint.play(referenceChirp);
+                selfPeakSample = Math.max(targetSample, elapsedSinceStart);
             }
 
             RangingResult result = new RangingResult(

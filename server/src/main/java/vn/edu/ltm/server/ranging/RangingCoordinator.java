@@ -142,17 +142,33 @@ public final class RangingCoordinator implements AutoCloseable {
 
                 sender.send(deviceId, startEnvelope);
 
+                // Pre-roll lead time: gives Agent time to receive network envelope and start audio capture
+                int leadDelayMs = Math.min(60, config.measurementIntervalMs() / 5);
+                if (leadDelayMs > 0) {
+                    try {
+                        Thread.sleep(leadDelayMs);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+
                 double[] referenceChirp = new LinearChirpGenerator(config).generate();
                 double[] serverAudio = endpoint.playAndCapture(referenceChirp, config.captureDurationMs());
 
-                long timeoutMs = config.captureDurationMs() + config.responseDelayMs() + 300L;
+                long timeoutMs = config.captureDurationMs() + config.responseDelayMs() + 200L;
                 RangingResult agentResult;
                 try {
                     agentResult = resultFuture.get(timeoutMs, TimeUnit.MILLISECONDS);
+                } catch (CancellationException e) {
+                    break;
                 } catch (TimeoutException | ExecutionException | InterruptedException e) {
                     if (attempt == maxAttempts - 1) {
                         sendAbort(deviceId, sessionId);
                         sampleSink.accept(RangingSample.failed(deviceId, sessionId, RangingStatus.RANGING_TIMEOUT));
+                    }
+                    if (closed.get() || !activeDevicesSupplier.get().contains(deviceId)) {
+                        break;
                     }
                     continue;
                 }
@@ -170,6 +186,12 @@ public final class RangingCoordinator implements AutoCloseable {
 
     private void processMeasurements(String deviceId, String sessionId, double[] serverAudio,
                                      double[] referenceChirp, RangingResult agentResult) {
+        if (agentResult == null || agentResult.status() != RangingStatus.ACOUSTIC_READY) {
+            sampleSink.accept(RangingSample.failed(deviceId, sessionId,
+                    agentResult != null ? agentResult.status() : RangingStatus.RANGING_TIMEOUT));
+            return;
+        }
+
         // Detect Server self-chirp within the initial transmission window
         int selfWindowLen = Math.min(serverAudio.length, referenceChirp.length * 3);
         double[] selfSlice = new double[selfWindowLen];
@@ -189,6 +211,11 @@ public final class RangingCoordinator implements AutoCloseable {
             peerDetection = detector.detect(searchSlice, referenceChirp);
             serverPeerPeak = searchStart + peerDetection.sampleIndex();
         } else {
+            sampleSink.accept(RangingSample.failed(deviceId, sessionId, RangingStatus.LOW_SNR));
+            return;
+        }
+
+        if (!peerDetection.accepted()) {
             sampleSink.accept(RangingSample.failed(deviceId, sessionId, RangingStatus.LOW_SNR));
             return;
         }
