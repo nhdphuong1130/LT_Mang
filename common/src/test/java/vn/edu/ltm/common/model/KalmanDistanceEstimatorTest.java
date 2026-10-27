@@ -45,4 +45,26 @@ class KalmanDistanceEstimatorTest {
                 "A strong -58 dBm classroom signal should be classified under 2m: " + sample.estimatedMeters());
         assertEquals("Rất gần (< 2m)", sample.zoneLabel());
     }
+
+    @Test
+    void preservesCentimeterDisplayResolution() {
+        var estimator = new KalmanDistanceEstimator(-50.0, 3.0);
+
+        DistanceTelemetry sample = estimator.updateFromRssi(-52.0);
+
+        assertEquals(1.17, sample.estimatedMeters(), 0.001);
+    }
+
+    @Test
+    void followsARealMovementWithinTwoFreshSamples() {
+        var estimator = new KalmanDistanceEstimator(-50.0, 3.0);
+        for (int i = 0; i < 8; i++) estimator.updateFromRssi(-58.0);
+
+        estimator.updateFromRssi(-47.0);
+        DistanceTelemetry movedNear = estimator.updateFromRssi(-47.0);
+
+        assertTrue(movedNear.estimatedMeters() < 1.0,
+                "A sustained 11 dBm change should cross below 1 m within two samples: "
+                        + movedNear.estimatedMeters());
+    }
 }

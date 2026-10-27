@@ -6,7 +6,7 @@ package vn.edu.ltm.common.model;
 public final class KalmanDistanceEstimator {
     public static final double DEFAULT_TX_POWER_1M_DBM = -50.0;
     public static final double DEFAULT_PATH_LOSS_INDEX = 3.0;
-    private static final double PROCESS_NOISE_Q = 0.08;
+    private static final double PROCESS_NOISE_Q = 1.0;
     private static final double MEASUREMENT_NOISE_R = 2.2;
 
     private final double txPowerAt1mDbm;
@@ -103,7 +103,7 @@ public final class KalmanDistanceEstimator {
         double pathLossMeters = Math.pow(10.0, ratio);
         // Clamp to realistic classroom/building range [0.3m .. 35.0m]
         double clamped = Math.max(0.3, Math.min(35.0, pathLossMeters));
-        return Math.round(clamped * 10.0) / 10.0;
+        return Math.round(clamped * 100.0) / 100.0;
     }
 
     public static int rssiToQualityPercent(double rssiDbm) {

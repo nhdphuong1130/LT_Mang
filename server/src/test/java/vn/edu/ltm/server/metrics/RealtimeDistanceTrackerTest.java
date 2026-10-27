@@ -14,6 +14,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
 class RealtimeDistanceTrackerTest {
+    @Test void liveSamplingIntervalsStayBelowOneSecond() {
+        assertTrue(RealtimeDistanceTracker.STATION_COLLECTION_INTERVAL_MILLIS <= 500);
+        assertTrue(RealtimeDistanceTracker.PROBE_INTERVAL_MILLIS <= 750);
+    }
+
     @Test
     void doesNotInventDistanceOrProbeValuesBeforeReceivingMeasurements() {
         var tracker = new RealtimeDistanceTracker();
@@ -75,5 +80,22 @@ class RealtimeDistanceTrackerTest {
         assertEquals("cal-2", afterChange.calibrationId());
         assertEquals(-80, afterChange.rssiFilteredDbm(), 0.01);
         assertTrue(afterChange.calibrated());
+    }
+
+    @Test void retainsRecentSampleAcrossEmptyScansUntilExpiry() {
+        Instant now = Instant.parse("2026-10-24T00:00:00Z");
+        var registry = new DirectLinkRegistry(Clock.fixed(now, ZoneOffset.UTC));
+        registry.update("pc-b", DirectLinkIdentity.connected("Direct", "CC:C5:30:08:CF:12", now,
+                "1.1.0", Set.of("WIFI_DIRECT_IDENTITY_V1")));
+        var tracker = new RealtimeDistanceTracker(registry, List::of, Clock.fixed(now, ZoneOffset.UTC));
+        tracker.recordStationSamples(List.of(new LinuxP2pStationCollector.StationSample(
+                "p2p-wlp0s20f3-0", "CC:C5:30:08:CF:12", -55, now)));
+
+        // Intermediate empty scan should not wipe out the fresh sample
+        tracker.recordStationSamples(List.of());
+        var probe = tracker.recordProbe("pc-b", 5.0, 128);
+
+        assertTrue(probe.hasPhysicalDistance());
+        assertEquals(DirectLinkStatus.CONNECTED, probe.directLinkStatus());
     }
 }

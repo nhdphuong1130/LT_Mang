@@ -21,6 +21,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DashboardControllerSelectionTest {
+    @Test void dashboardRefreshesDistanceAtLeastTwicePerSecond() {
+        assertTrue(ServerDashboardApp.DASHBOARD_REFRESH_MILLIS <= 500);
+    }
     @Test
     void clientCardKeepsEverySummaryLineReadableAndInspectorShowsFullMachineDetails() throws Exception {
         var error = new AtomicReference<Throwable>();
@@ -64,7 +67,7 @@ class DashboardControllerSelectionTest {
                 String cardText = detailLines.stream().map(node -> ((Label) node).getText())
                         .reduce("", (left, right) -> left + "\n" + right);
                 assertTrue(cardText.contains("Disk 67%"));
-                assertTrue(cardText.contains("~1.8 m"));
+                assertTrue(cardText.contains("~1.80 m"));
 
                 var inspector = (TextArea) loader.getNamespace().get("dxdiagSummaryArea");
                 assertTrue(inspector.getText().contains("Actual detailed laptop model"));

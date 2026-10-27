@@ -8,7 +8,7 @@ import java.util.*;
 
 /** Collects auditable, de-duplicated Server-side P2P RSSI samples at labelled distances. */
 public final class DistanceCalibrationSession {
-    public static final List<Double> REQUIRED_DISTANCES_METERS = List.of(1.0, 2.0, 3.0, 5.0);
+    public static final List<Double> REQUIRED_DISTANCES_METERS = List.of(0.5, 1.0, 2.0, 3.0, 5.0);
     private static final Duration MAX_SAMPLE_AGE = Duration.ofSeconds(5);
 
     public record AcceptedSample(String deviceId, double distanceMeters, double rssiDbm, Instant sampledAt,

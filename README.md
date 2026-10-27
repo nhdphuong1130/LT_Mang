@@ -234,7 +234,7 @@ MAC station phải trùng `localP2pMac` do Agent báo. Dashboard chỉ hiển th
 ### 8.4. Hiệu chuẩn có bằng chứng
 
 1. Chọn Client trên Dashboard và bấm **Hiệu chuẩn khoảng cách**.
-2. Đặt khoảng cách thực tế lần lượt tại 1 m, 2 m, 3 m và 5 m.
+2. Đặt khoảng cách thực tế lần lượt tại 0,5 m, 1 m, 2 m, 3 m và 5 m.
 3. Mỗi mốc bấm thu đủ 100 mẫu mới. Hệ thống loại mẫu cũ, trùng, sai Client hoặc sai nguồn.
 4. Xuất CSV để lưu bằng chứng thực nghiệm.
 5. Kiểm tra các giá trị `A`, `n`, MAE và RMSE rồi bấm kích hoạt.

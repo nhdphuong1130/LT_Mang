@@ -23,6 +23,8 @@ import java.util.regex.Pattern;
  * RTT is never converted into metres.
  */
 public final class RealtimeDistanceTracker {
+    static final long STATION_COLLECTION_INTERVAL_MILLIS = 500;
+    static final long PROBE_INTERVAL_MILLIS = 750;
     private static final Pattern PING_TIME = Pattern.compile("time[=<]([0-9.]+)\\s*ms", Pattern.CASE_INSENSITIVE);
     private static final Pattern PING_TTL = Pattern.compile("ttl=(\\d+)", Pattern.CASE_INSENSITIVE);
 
@@ -48,7 +50,7 @@ public final class RealtimeDistanceTracker {
     private final Supplier<List<LinuxP2pStationCollector.StationSample>> stationSupplier;
     private final Clock clock;
     private final Supplier<DistanceCalibrationModel> calibrationSupplier;
-    private volatile List<LinuxP2pStationCollector.StationSample> stationSamples = List.of();
+    private final Map<String, LinuxP2pStationCollector.StationSample> stationSamplesByMac = new ConcurrentHashMap<>();
     private final AtomicBoolean collectingStations = new AtomicBoolean(false);
     private volatile long lastStationCollectionNanos;
 
@@ -74,12 +76,18 @@ public final class RealtimeDistanceTracker {
     }
 
     public void recordStationSamples(List<LinuxP2pStationCollector.StationSample> samples) {
-        stationSamples = samples == null ? List.of() : List.copyOf(samples);
+        if (samples != null) {
+            for (var sample : samples) {
+                if (sample != null && sample.stationMac() != null) {
+                    stationSamplesByMac.put(sample.stationMac(), sample);
+                }
+            }
+        }
     }
 
     public DistanceTelemetry recordProbe(String deviceId, double rttMs, int ttl) {
         DeviceTrack track = tracks.computeIfAbsent(deviceId, id -> new DeviceTrack());
-        var resolution = directLinks.resolve(deviceId, stationSamples);
+        var resolution = directLinks.resolve(deviceId, List.copyOf(stationSamplesByMac.values()));
         DistanceTelemetry updated;
         if (resolution.status() == DirectLinkStatus.CONNECTED && resolution.sample() != null) {
             var sample = resolution.sample();
@@ -103,7 +111,7 @@ public final class RealtimeDistanceTracker {
         scheduleStationCollection();
         long now = System.nanoTime();
         if (ipAddress != null && !ipAddress.isBlank()
-                && (track.latestTelemetry == null || (now - track.lastProbeNanos) > TimeUnit.SECONDS.toNanos(2))) {
+                && (track.latestTelemetry == null || (now - track.lastProbeNanos) > TimeUnit.MILLISECONDS.toNanos(PROBE_INTERVAL_MILLIS))) {
             if (track.probing.compareAndSet(false, true)) {
                 Thread.ofVirtual().name("distance-probe-" + deviceId).start(() -> {
                     try {
@@ -116,7 +124,7 @@ public final class RealtimeDistanceTracker {
             }
         }
         if (track.latestTelemetry == null) {
-            var resolution = directLinks.resolve(deviceId, stationSamples);
+            var resolution = directLinks.resolve(deviceId, List.copyOf(stationSamplesByMac.values()));
             return DistanceTelemetry.waitingFor(resolution.status(), resolution.reason());
         }
         return track.latestTelemetry;
@@ -124,7 +132,7 @@ public final class RealtimeDistanceTracker {
 
     private void scheduleStationCollection() {
         long now = System.nanoTime();
-        if ((now - lastStationCollectionNanos) < TimeUnit.SECONDS.toNanos(1)) return;
+        if ((now - lastStationCollectionNanos) < TimeUnit.MILLISECONDS.toNanos(STATION_COLLECTION_INTERVAL_MILLIS)) return;
         if (!collectingStations.compareAndSet(false, true)) return;
         lastStationCollectionNanos = now;
         Thread.ofVirtual().name("wifi-direct-station-scan").start(() -> {

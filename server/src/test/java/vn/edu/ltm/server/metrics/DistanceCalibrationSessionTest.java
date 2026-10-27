@@ -6,16 +6,22 @@ import vn.edu.ltm.common.model.*;
 
 import java.nio.file.Path;
 import java.time.*;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class DistanceCalibrationSessionTest {
     private static final Instant START = Instant.parse("2026-10-24T00:00:00Z");
 
+    @Test void includesSubMeterReferencePoint() {
+        assertEquals(List.of(0.5, 1.0, 2.0, 3.0, 5.0),
+                DistanceCalibrationSession.REQUIRED_DISTANCES_METERS);
+    }
+
     @Test void acceptsOneHundredFreshVerifiedSamplesPerLabelAndActivatesModel(@TempDir Path temp) throws Exception {
         Instant now = START.plusSeconds(500);
         var session = new DistanceCalibrationSession("pc-b", 100, Clock.fixed(now, ZoneOffset.UTC));
-        double[] distances = {1, 2, 3, 5};
+        double[] distances = {0.5, 1, 2, 3, 5};
         int sequence = 0;
         for (double distance : distances) {
             for (int i = 0; i < 100; i++) {

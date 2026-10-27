@@ -143,7 +143,7 @@ Tài liệu này hướng dẫn kịch bản thực nghiệm trực tiếp hệ 
 ### Phần 9: Hiệu chuẩn và lưu bằng chứng
 
 1. Chọn Client, mở **Hiệu chuẩn khoảng cách**.
-2. Thu đủ 100 mẫu tại từng mốc 1 m, 2 m, 3 m và 5 m; không di chuyển thiết bị trong lúc thu một mốc.
+2. Thu đủ 100 mẫu tại từng mốc 0,5 m, 1 m, 2 m, 3 m và 5 m; không di chuyển thiết bị trong lúc thu một mốc.
 3. Xuất CSV và ghi lại điều kiện phòng, hướng đặt laptop, băng tần/kênh và vật cản.
 4. Sau khi đủ 400 mẫu, kiểm tra `A`, `n`, MAE, RMSE rồi kích hoạt mô hình.
 5. Di chuyển Client tới một khoảng cách không thuộc tập hiệu chuẩn (ví dụ 2,5 m) để kiểm tra chéo. Trình bày kết quả là **ước lượng RSSI**, không khẳng định độ chính xác tuyệt đối.

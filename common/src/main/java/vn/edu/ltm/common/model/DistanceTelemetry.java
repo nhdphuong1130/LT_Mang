@@ -74,7 +74,7 @@ public record DistanceTelemetry(
                     ? String.format(Locale.ROOT, "📍 Chờ RSSI | RTT %.1f ms | %d Hop", rttMs, Math.max(1, hopCount))
                     : "📍 Đang chờ tín hiệu RSSI từ Client";
         }
-        return String.format(Locale.ROOT, "📍 ~%.1f m | RTT %.0f ms | %.0f dBm (%d Hop)",
+        return String.format(Locale.ROOT, "📍 ~%.2f m | RTT %.0f ms | %.0f dBm (%d Hop)",
                 estimatedMeters, Math.max(0.0, rttMs), rssiFilteredDbm, Math.max(0, hopCount));
     }
 }

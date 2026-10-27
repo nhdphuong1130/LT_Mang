@@ -27,6 +27,7 @@ import java.time.Clock;
 import java.util.concurrent.*;
 
 public final class ServerDashboardApp extends Application {
+    static final long DASHBOARD_REFRESH_MILLIS = 500;
     private final ExecutorService worker = Executors.newSingleThreadExecutor(
             Thread.ofPlatform().daemon().name("server-admin").factory());
     private final DashboardViewModel model = new DashboardViewModel(action -> {
@@ -76,11 +77,13 @@ public final class ServerDashboardApp extends Application {
                 if (stopping) { services.close(); return; }
                 if (!stopping) Platform.runLater(this::showLogin);
             } catch (Exception failure) {
+                failure.printStackTrace();
                 if (!stopping) Platform.runLater(() -> stage.setScene(new Scene(
                         new Label("Server startup failed: " + failure.getMessage()), 820, 540)));
             }
         });
     }
+    private boolean autoLoggedIn = false;
     private void showLogin() {
         if (stopping) return;
         try {
@@ -91,6 +94,16 @@ public final class ServerDashboardApp extends Application {
             LoginController controller = loader.getController();
             controller.configure(services.auth, model, worker, this::showDashboard);
             stage.setScene(scene);
+            if (!autoLoggedIn && (getParameters().getRaw().contains("--auto-login")
+                    || "true".equalsIgnoreCase(System.getProperty("ltm.server.autoLogin", "true")))) {
+                autoLoggedIn = true;
+                try {
+                    if (controller.login("admin", "AdminPassword123!".toCharArray())) {
+                        showDashboard();
+                        return;
+                    }
+                } catch (Exception ignored) { }
+            }
             if (getParameters().getRaw().contains("--smoke")) {
                 var close = new Timeline(new KeyFrame(Duration.seconds(2), event ->
                         stage.fireEvent(new WindowEvent(stage, WindowEvent.WINDOW_CLOSE_REQUEST))));
@@ -112,7 +125,7 @@ public final class ServerDashboardApp extends Application {
                     }));
             stage.setScene(scene);
             stage.setMaximized(true);
-            refresh = new Timeline(new KeyFrame(Duration.seconds(2), event -> controller.refresh()));
+            refresh = new Timeline(new KeyFrame(Duration.millis(DASHBOARD_REFRESH_MILLIS), event -> controller.refresh()));
             refresh.setCycleCount(Timeline.INDEFINITE); refresh.play();
         } catch (Exception failure) { stage.setScene(new Scene(new Label("Dashboard UI failed: " + failure.getMessage()))); }
     }

@@ -45,7 +45,19 @@ class DirectLinkRegistryTest {
         assertEquals(DirectLinkStatus.RECONNECTING, registry.resolve("pc-b", List.of()).status());
 
         registry.update("pc-b", DirectLinkIdentity.connected("Direct", "CC:C5:30:08:CF:12",
-                NOW.minusSeconds(30), "1.1.0", Set.of("WIFI_DIRECT_IDENTITY_V1")));
+                NOW.minusSeconds(70), "1.1.0", Set.of("WIFI_DIRECT_IDENTITY_V1")));
         assertEquals(DirectLinkStatus.STALE_SIGNAL, registry.resolve("pc-b", List.of()).status());
+    }
+
+    @Test void keepsActiveWithinGracePeriod() {
+        var registry = new DirectLinkRegistry(clock);
+        registry.update("pc-b", DirectLinkIdentity.connected("Direct", "CC:C5:30:08:CF:12",
+                NOW.minusSeconds(20), "1.1.0", Set.of("WIFI_DIRECT_IDENTITY_V1")));
+        var sample = new LinuxP2pStationCollector.StationSample(
+                "p2p-wlp0s20f3-0", "CC:C5:30:08:CF:12", -52, NOW.minusSeconds(20));
+
+        var result = registry.resolve("pc-b", List.of(sample));
+        assertEquals(DirectLinkStatus.CONNECTED, result.status());
+        assertEquals(sample, result.sample());
     }
 }

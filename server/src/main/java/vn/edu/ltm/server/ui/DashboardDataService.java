@@ -153,7 +153,7 @@ public final class DashboardDataService {
             String probeIp = liveIp != null ? liveIp : extractIpv4(dxdiag.networkSummary());
             DistanceTelemetry dist = distanceTracker.getOrProbe(device.deviceId(), probeIp, isOnline);
             String distTag = dist.hasPhysicalDistance()
-                    ? String.format(Locale.ROOT, " [📍 ~%.1fm | RTT %.0fms]", dist.estimatedMeters(), Math.max(0.0, dist.rttMs()))
+                    ? String.format(Locale.ROOT, " [📍 ~%.2fm | RTT %.0fms]", dist.estimatedMeters(), Math.max(0.0, dist.rttMs()))
                     : "";
             deviceRows.set(deviceRows.size() - 1, deviceRows.getLast() + distTag);
 

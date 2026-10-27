@@ -12,8 +12,8 @@ import java.util.concurrent.ConcurrentHashMap;
 /** Joins Agent-reported P2P adapter identities to radio stations observed by the Server. */
 public final class DirectLinkRegistry {
     public static final String REQUIRED_CAPABILITY = "WIFI_DIRECT_IDENTITY_V1";
-    private static final Duration IDENTITY_MAX_AGE = Duration.ofSeconds(10);
-    private static final Duration SIGNAL_MAX_AGE = Duration.ofSeconds(5);
+    private static final Duration IDENTITY_MAX_AGE = Duration.ofSeconds(60);
+    private static final Duration SIGNAL_MAX_AGE = Duration.ofSeconds(30);
 
     public record Resolution(DirectLinkStatus status, LinuxP2pStationCollector.StationSample sample,
                              String reason) { }

@@ -124,7 +124,7 @@ d = 10 ^ ((A - RSSI) / (10 n))
 
 `A = -50 dBm` and `n = 3.0` are development placeholders only. They must not be presented as experimentally proven final values.
 
-The final shared values are fitted once from a reproducible calibration dataset rather than calibrated on every normal application run. For representative Clients N, B, and T, collect 100 valid Wi-Fi Direct RSSI samples at each known distance of 1 m, 2 m, 3 m, and 5 m. Store raw samples in CSV with Client, distance, timestamp, band, interface, and peer BSSID.
+The final shared values are fitted once from a reproducible calibration dataset rather than calibrated on every normal application run. For representative Clients N, B, and T, collect 100 valid Wi-Fi Direct RSSI samples at each known distance of 0.5 m, 1 m, 2 m, 3 m, and 5 m. Store raw samples in CSV with Client, distance, timestamp, band, interface, and peer BSSID.
 
 Fit `A` and `n` by least-squares regression over all accepted samples. Report sample count, rejected samples, MAE, RMSE, and a true-distance versus estimated-distance plot. Store the fitted shared values and a calibration identifier in configuration:
 

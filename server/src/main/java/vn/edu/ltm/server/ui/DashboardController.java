@@ -332,7 +332,7 @@ public final class DashboardController {
         DxdiagProfile dx = item.dxdiag() != null ? item.dxdiag() : DxdiagProfile.unknown(item.deviceId(), item.platform());
         var dist = item.distance() != null ? item.distance() : vn.edu.ltm.common.model.DistanceTelemetry.offline();
         String distMetersText = dist.hasPhysicalDistance()
-                ? String.format(Locale.ROOT, "~%.1f mét — %s", dist.estimatedMeters(), dist.zoneLabel())
+                ? String.format(Locale.ROOT, "~%.2f mét — %s", dist.estimatedMeters(), dist.zoneLabel())
                 : dist.isOnline() ? dist.method() : "OFFLINE (Mất kết nối)";
         String distSignalText = dist.hasPhysicalDistance()
                 ? String.format(Locale.ROOT, "%.1f dBm (Raw: %.1f dBm) | Chất lượng sóng: %d%%",
@@ -389,7 +389,7 @@ public final class DashboardController {
     static String formatDistanceDetails(vn.edu.ltm.common.model.DistanceTelemetry dist) {
         if (dist == null || !dist.isOnline()) return "Trạng thái liên kết: OFFLINE\nLAN RTT: N/A";
         String physical = dist.hasPhysicalDistance()
-                ? String.format(Locale.ROOT, "~%.1f m (%s)", dist.estimatedMeters(), dist.zoneLabel())
+                ? String.format(Locale.ROOT, "~%.2f m (%s)", dist.estimatedMeters(), dist.zoneLabel())
                 : "Chưa có khoảng cách vật lý — " + dist.method();
         String signal = dist.hasPhysicalDistance()
                 ? String.format(Locale.ROOT, "Raw %.1f dBm | Kalman %.1f dBm | %d%%",
@@ -560,7 +560,7 @@ public final class DashboardController {
                 clientNode.setEffect(new DropShadow(14, 0, 0, cLight));
 
                 String tagText = hasDistance
-                        ? String.format(Locale.ROOT, "%s (%s)\n📍 ~%.1f m | RTT %.0f ms | %.0f dBm",
+                        ? String.format(Locale.ROOT, "%s (%s)\n📍 ~%.2f m | RTT %.0f ms | %.0f dBm",
                                 item.deviceId(), item.displayName(), dist.estimatedMeters(), dist.rttMs(), dist.rssiFilteredDbm())
                         : connected
                                 ? String.format(Locale.ROOT, "%s (%s)\nONLINE — Đang chờ RSSI", item.deviceId(), item.displayName())
@@ -575,7 +575,7 @@ public final class DashboardController {
 
         drawRadar.run();
         var radarTimeline = new javafx.animation.Timeline(
-                new javafx.animation.KeyFrame(javafx.util.Duration.seconds(2), e -> {
+                new javafx.animation.KeyFrame(javafx.util.Duration.millis(ServerDashboardApp.DASHBOARD_REFRESH_MILLIS), e -> {
                     refresh();
                     drawRadar.run();
                 })
@@ -602,7 +602,7 @@ public final class DashboardController {
         var session = new DistanceCalibrationSession(selected.deviceId());
         var dialog = new Dialog<Void>();
         dialog.setTitle("Hiệu chuẩn khoảng cách Wi-Fi Direct — " + selected.deviceId());
-        dialog.setHeaderText("Đặt Client lần lượt tại 1 m, 2 m, 3 m và 5 m; mỗi mốc thu 100 mẫu mới.");
+        dialog.setHeaderText("Đặt Client lần lượt tại 0,5 m, 1 m, 2 m, 3 m và 5 m; mỗi mốc thu 100 mẫu mới.");
 
         var distanceChoice = new ComboBox<Double>();
         distanceChoice.getItems().setAll(DistanceCalibrationSession.REQUIRED_DISTANCES_METERS);
