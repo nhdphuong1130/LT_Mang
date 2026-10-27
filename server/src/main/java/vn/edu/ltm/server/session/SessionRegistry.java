@@ -83,6 +83,8 @@ public final class SessionRegistry implements AutoCloseable {
 
     public Optional<AgentSession> find(String deviceId) { return Optional.ofNullable(sessions.get(deviceId)); }
 
+    public java.util.Set<String> activeDeviceIds() { return java.util.Set.copyOf(sessions.keySet()); }
+
     public void touch(String deviceId, Instant now) {
         sessions.computeIfPresent(deviceId, (id, session) -> {
             devices.markOnline(id, now);

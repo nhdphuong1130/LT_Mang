@@ -171,16 +171,35 @@ public final class ServerDashboardApp extends Application {
                     ? Path.of("ansible").toAbsolutePath()
                     : Path.of(".worktrees/agent-monitoring-backup/ansible").toAbsolutePath();
             ansibleSync = new vn.edu.ltm.server.ansible.AnsibleSyncService(dataDir, playbookDir, provisioning, restores);
+            var metricsHandler = new MetricsMessageHandler(metrics, new IncidentService(incidents), sessions,
+                    devices, distanceTracker, directLinks);
+            var rangingConfig = new vn.edu.ltm.common.ranging.AcousticRangingConfigLoader().load();
+            var audioEndpoint = new vn.edu.ltm.common.ranging.JavaSoundAudioEndpoint(rangingConfig);
+            var ranging = new vn.edu.ltm.server.ranging.RangingCoordinator(
+                    sessions::send,
+                    sessions::activeDeviceIds,
+                    audioEndpoint,
+                    rangingConfig,
+                    sample -> {}
+            );
             control = new ControlTcpServer(new ServerConfig(bind, controlPort), provisioning, sessions,
-                    Clock.systemUTC(), new MetricsMessageHandler(metrics, new IncidentService(incidents), sessions,
-                    devices, distanceTracker, directLinks));
+                    Clock.systemUTC(), (deviceId, message) -> {
+                        metricsHandler.accept(deviceId, message);
+                        ranging.handleInboundMessage(deviceId, message);
+                    });
             files = new FileTransferServer(bind, filePort, provisioning, backups, restores);
             listeners = new ServerListeners(new ServerListeners.Listener() {
                 public void start() throws Exception { files.start(); }
                 public void close() { files.close(); }
             }, new ServerListeners.Listener() {
-                public void start() throws Exception { control.start(); }
-                public void close() { control.close(); }
+                public void start() throws Exception {
+                    control.start();
+                    ranging.start();
+                }
+                public void close() {
+                    try { ranging.close(); } catch (Exception ignored) {}
+                    control.close();
+                }
             });
         }
         void start() throws Exception { listeners.start(); }

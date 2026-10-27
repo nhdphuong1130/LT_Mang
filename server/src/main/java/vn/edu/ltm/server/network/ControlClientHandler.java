@@ -65,6 +65,9 @@ public final class ControlClientHandler implements Runnable {
                     sessions.touch(session.deviceId(), clock.instant());
                 } else if (message.type() == MessageType.METRICS || message.type() == MessageType.RISK_ALERT
                         || message.type() == MessageType.RISK_RESOLVED || message.type() == MessageType.RESTORE_RESULT
+                        || message.type() == MessageType.RANGING_CAPABILITIES
+                        || message.type() == MessageType.RANGING_RESULT
+                        || message.type() == MessageType.RANGING_ABORT
                         || message.type() == MessageType.ERROR) {
                     inbound.accept(session.deviceId(), message);
                 } else {
