@@ -116,7 +116,7 @@ public final class AgentRangingService implements AutoCloseable {
             long peerPeakSample = detection.sampleIndex();
             long responseDelaySamples = Math.round((double) request.responseDelayMs() * request.sampleRateHz() / 1000.0);
 
-            double leakageDb = AudioHardwareGate.measureAudibleLeakageDb(captured,
+            double leakageDb = AudioHardwareGate.measureAudibleLeakageDb(referenceChirp,
                     request.sampleRateHz(), config.audibleCeilingHz());
 
             RangingStatus status;

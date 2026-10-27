@@ -237,7 +237,7 @@ public final class RangingCoordinator implements AutoCloseable {
         }
 
         double serverLeakageDb = AudioHardwareGate.measureAudibleLeakageDb(
-                serverAudio, config.sampleRateHz(), config.audibleCeilingHz());
+                referenceChirp, config.sampleRateHz(), config.audibleCeilingHz());
 
         double stability = calculateRollingStability(deviceId, distanceMeters);
 
