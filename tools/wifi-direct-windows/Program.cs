@@ -19,6 +19,7 @@ public static class DirectLinkState
 {
     public static DirectLinkEvent Searching(string peer) => new("SEARCHING", peer, null, null);
     public static DirectLinkEvent Discovered(string peer, string id) => new("DISCOVERED", peer, id, null);
+    public static DirectLinkEvent Listening() => new("LISTENING", "", null, "Wi-Fi Direct listener active; waiting for incoming connection");
     public static DirectLinkEvent Unavailable(string peer, string message) => new("UNAVAILABLE", peer, null, message);
     public static DirectLinkEvent Connected(string peer, string id) => new("CONNECTED", peer, id, null);
     public static DirectLinkEvent Disconnected(string peer, string id) => new("RECONNECTING", peer, id, "Wi-Fi Direct link disconnected");
@@ -28,6 +29,13 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (args.Contains("--help") || args.Contains("-h")) {
+            Console.WriteLine("Usage:");
+            Console.WriteLine("  WifiDirectAgentHelper.exe [--listen]");
+            Console.WriteLine("  WifiDirectAgentHelper.exe --peer-name <Linux peer name>");
+            Console.WriteLine("  WifiDirectAgentHelper.exe --list");
+            return 0;
+        }
         if (args.Contains("--list")) {
 #if WINDOWS
             return await ListWindowsPeersAsync();
@@ -37,15 +45,19 @@ public static class Program
 #endif
         }
         string? peerName = Argument(args, "--peer-name");
-        if (string.IsNullOrWhiteSpace(peerName)) {
-            Console.Error.WriteLine("Usage: WifiDirectAgentHelper.exe --peer-name <Linux peer name>");
-            return 2;
-        }
-        Emit(DirectLinkState.Searching(peerName));
+        if (!string.IsNullOrWhiteSpace(peerName)) {
+            Emit(DirectLinkState.Searching(peerName));
 #if WINDOWS
-        return await RunWindowsAsync(peerName);
+            return await RunWindowsAsync(peerName);
 #else
-        Emit(DirectLinkState.Unavailable(peerName, "Wi-Fi Direct WinRT API is available only on Windows"));
+            Emit(DirectLinkState.Unavailable(peerName, "Wi-Fi Direct WinRT API is available only on Windows"));
+            return 3;
+#endif
+        }
+#if WINDOWS
+        return await RunListenerAsync();
+#else
+        Emit(DirectLinkState.Unavailable("", "Wi-Fi Direct WinRT API is available only on Windows"));
         return 3;
 #endif
     }
@@ -61,11 +73,83 @@ public static class Program
 #if WINDOWS
     private static async Task<int> ListWindowsPeersAsync()
     {
-        string selector = WiFiDirectDevice.GetDeviceSelector(WiFiDirectDeviceSelectorType.AssociationEndpoint);
-        DeviceInformationCollection devices = await DeviceInformation.FindAllAsync(selector);
-        foreach (DeviceInformation peer in devices) Emit(DirectLinkState.Discovered(peer.Name, peer.Id));
-        if (devices.Count == 0) Emit(DirectLinkState.Unavailable("", "No discoverable Wi-Fi Direct peer"));
-        return devices.Count == 0 ? 4 : 0;
+        var publisher = new WiFiDirectAdvertisementPublisher();
+        publisher.Advertisement.ListenStateDiscoverability = WiFiDirectAdvertisementListenStateDiscoverability.Normal;
+        try {
+            publisher.Start();
+        } catch { }
+        try {
+            await Task.Delay(2000);
+            string selector = WiFiDirectDevice.GetDeviceSelector(WiFiDirectDeviceSelectorType.AssociationEndpoint);
+            DeviceInformationCollection devices = await DeviceInformation.FindAllAsync(selector);
+            foreach (DeviceInformation peer in devices) Emit(DirectLinkState.Discovered(peer.Name, peer.Id));
+            if (devices.Count == 0) Emit(DirectLinkState.Unavailable("", "No discoverable Wi-Fi Direct peer"));
+            return devices.Count == 0 ? 4 : 0;
+        } finally {
+            try { publisher.Stop(); } catch { }
+        }
+    }
+
+    private static async Task<int> RunListenerAsync()
+    {
+        try {
+            var publisher = new WiFiDirectAdvertisementPublisher();
+            publisher.Advertisement.ListenStateDiscoverability = WiFiDirectAdvertisementListenStateDiscoverability.Normal;
+            publisher.Advertisement.IsAutonomousGroupOwnerEnabled = false;
+            publisher.Start();
+
+            var listener = new WiFiDirectConnectionListener();
+            var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            WiFiDirectDevice? activeDevice = null;
+
+            listener.ConnectionRequested += async (sender, args) => {
+                try {
+                    WiFiDirectConnectionRequest request = args.GetConnectionRequest();
+                    var device = request.DeviceInformation;
+                    Emit(DirectLinkState.Searching(device.Name));
+
+                    if (device.Pairing.CanPair && !device.Pairing.IsPaired) {
+                        var custom = device.Pairing.Custom;
+                        custom.PairingRequested += (pairingSender, pairingArgs) => {
+                            pairingArgs.Accept();
+                        };
+                        await custom.PairAsync(
+                            DevicePairingKinds.ConfirmOnly | DevicePairingKinds.ProvidePin | DevicePairingKinds.DisplayPin,
+                            DevicePairingProtectionLevel.None);
+                    }
+
+                    var parameters = new WiFiDirectConnectionParameters { GroupOwnerIntent = 0 };
+                    activeDevice = await WiFiDirectDevice.FromIdAsync(device.Id, parameters);
+                    if (activeDevice != null) {
+                        Emit(DirectLinkState.Connected(device.Name, device.Id));
+                        activeDevice.ConnectionStatusChanged += (_, _) => {
+                            if (activeDevice.ConnectionStatus == WiFiDirectConnectionStatus.Connected) {
+                                Emit(DirectLinkState.Connected(device.Name, device.Id));
+                            } else {
+                                Emit(DirectLinkState.Disconnected(device.Name, device.Id));
+                            }
+                        };
+                    }
+                } catch (Exception ex) {
+                    Emit(DirectLinkState.Unavailable("", "Connection error: " + ex.Message));
+                }
+            };
+
+            Emit(DirectLinkState.Listening());
+
+            Console.CancelKeyPress += (_, eventArgs) => {
+                eventArgs.Cancel = true;
+                try { publisher.Stop(); } catch { }
+                activeDevice?.Dispose();
+                stopped.TrySetResult();
+            };
+
+            await stopped.Task;
+            return 0;
+        } catch (Exception failure) {
+            Emit(DirectLinkState.Unavailable("", failure.GetType().Name + ": " + failure.Message));
+            return 1;
+        }
     }
 
     private static async Task<int> RunWindowsAsync(string peerName)

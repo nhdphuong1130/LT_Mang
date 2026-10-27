@@ -35,7 +35,7 @@ echo "Windows peer  : $peer_mac"
 [[ $lan_state == *connected* ]] || { echo "Abort: physical Wi-Fi LAN is not connected" >&2; exit 1; }
 [[ -n $lan_connection && $lan_connection != -- ]] || { echo "Abort: cannot identify active LAN profile" >&2; exit 1; }
 [[ -n $p2p_device ]] || { echo "Abort: NetworkManager exposes no wifi-p2p device" >&2; exit 1; }
-iw list | grep -q 'P2P-GO' || { echo "Abort: adapter does not advertise P2P-GO support" >&2; exit 1; }
+iw list | grep 'P2P-GO' >/dev/null || { echo "Abort: adapter does not advertise P2P-GO support" >&2; exit 1; }
 
 echo "Planned command: nmcli connection add type wifi-p2p con-name $profile_name peer $peer_mac"
 echo "Planned command: nmcli connection up $profile_name"
@@ -55,7 +55,7 @@ if nmcli -t -f NAME connection show | grep -Fxq "$profile_name"; then
   echo "Abort: profile already exists: $profile_name" >&2
   exit 1
 fi
-nmcli connection add type wifi-p2p con-name "$profile_name" peer "$peer_mac"
+nmcli connection add type wifi-p2p con-name "$profile_name" peer "$peer_mac" connection.autoconnect no
 nmcli connection up "$profile_name"
 
 new_state=$(nmcli -t -f GENERAL.STATE device show "$physical_iface" | cut -d: -f2- || true)

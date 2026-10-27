@@ -16,6 +16,14 @@ public sealed class DirectLinkStateTests
     }
 
     [Fact]
+    public void ListeningStateUsesStableLineDelimitedJsonShape()
+    {
+        using JsonDocument json = JsonDocument.Parse(DirectLinkState.Listening().ToJson());
+        Assert.Equal("LISTENING", json.RootElement.GetProperty("status").GetString());
+        Assert.NotNull(json.RootElement.GetProperty("message").GetString());
+    }
+
+    [Fact]
     public void DisconnectTransitionsToReconnectState()
     {
         DirectLinkEvent state = DirectLinkState.Disconnected("LTM Server", "peer-1");
