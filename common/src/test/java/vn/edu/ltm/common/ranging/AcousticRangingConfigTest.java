@@ -38,6 +38,7 @@ class AcousticRangingConfigTest {
         return AcousticRangingConfig.builder()
                 .enabled(true).playbackMixer("").captureMixer("")
                 .sampleRateHz(96_000).chirpStartHz(20_500).chirpEndHz(22_500)
+                .playbackAmplitude(0.20)
                 .chirpDurationMs(20).captureDurationMs(250).responseDelayMs(50)
                 .measurementIntervalMs(500).maxRetries(2).rollingWindow(5)
                 .confidenceThreshold(90).minSnrDb(12).minPeakRatio(2.5)

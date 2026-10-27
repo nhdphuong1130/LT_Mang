@@ -3,7 +3,7 @@ package vn.edu.ltm.common.ranging;
 /** All acoustic-ranging tunables, validated once before any audio work starts. */
 public record AcousticRangingConfig(
         boolean enabled, String playbackMixer, String captureMixer,
-        int sampleRateHz, double chirpStartHz, double chirpEndHz,
+        int sampleRateHz, double chirpStartHz, double chirpEndHz, double playbackAmplitude,
         int chirpDurationMs, int captureDurationMs, int responseDelayMs,
         int measurementIntervalMs, int maxRetries, int rollingWindow,
         double confidenceThreshold, double minSnrDb, double minPeakRatio,
@@ -23,6 +23,8 @@ public record AcousticRangingConfig(
         require(chirpStartHz > audibleCeilingHz, "Chirp start must exceed the audible ceiling");
         require(chirpEndHz > chirpStartHz, "Chirp end must exceed chirp start");
         require(chirpEndHz < sampleRateHz / 2.0, "Chirp end must be below the Nyquist frequency");
+        require(playbackAmplitude > 0 && playbackAmplitude <= 1,
+                "Playback amplitude must be in (0, 1]");
         require(chirpDurationMs > 0 && captureDurationMs > 0 && responseDelayMs >= 0,
                 "Audio durations must be positive");
         require(measurementIntervalMs > 0, "Measurement interval must be positive");
@@ -62,6 +64,7 @@ public record AcousticRangingConfig(
         private int sampleRateHz;
         private double chirpStartHz;
         private double chirpEndHz;
+        private double playbackAmplitude;
         private int chirpDurationMs;
         private int captureDurationMs;
         private int responseDelayMs;
@@ -89,6 +92,7 @@ public record AcousticRangingConfig(
         public Builder sampleRateHz(int value) { sampleRateHz = value; return this; }
         public Builder chirpStartHz(double value) { chirpStartHz = value; return this; }
         public Builder chirpEndHz(double value) { chirpEndHz = value; return this; }
+        public Builder playbackAmplitude(double value) { playbackAmplitude = value; return this; }
         public Builder chirpDurationMs(int value) { chirpDurationMs = value; return this; }
         public Builder captureDurationMs(int value) { captureDurationMs = value; return this; }
         public Builder responseDelayMs(int value) { responseDelayMs = value; return this; }
@@ -112,7 +116,7 @@ public record AcousticRangingConfig(
 
         public AcousticRangingConfig build() {
             return new AcousticRangingConfig(enabled, playbackMixer, captureMixer, sampleRateHz,
-                    chirpStartHz, chirpEndHz, chirpDurationMs, captureDurationMs, responseDelayMs,
+                    chirpStartHz, chirpEndHz, playbackAmplitude, chirpDurationMs, captureDurationMs, responseDelayMs,
                     measurementIntervalMs, maxRetries, rollingWindow, confidenceThreshold, minSnrDb,
                     minPeakRatio, audibleCeilingHz, maxAudibleLeakageDb, maxDistanceMeters,
                     ambientTemperatureCelsius, calibrationOffsetMillis, maxJumpMeters, snrWeight,

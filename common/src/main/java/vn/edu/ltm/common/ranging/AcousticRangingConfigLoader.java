@@ -13,6 +13,7 @@ public final class AcousticRangingConfigLoader {
     private static final String DEFAULT_RESOURCE = "/acoustic-ranging-defaults.properties";
     private static final Set<String> KEYS = Set.of(
             "enabled", "playbackMixer", "captureMixer", "sampleRateHz", "chirpStartHz", "chirpEndHz",
+            "playbackAmplitude",
             "chirpDurationMs", "captureDurationMs", "responseDelayMs", "measurementIntervalMs",
             "maxRetries", "rollingWindow", "confidenceThreshold", "minSnrDb", "minPeakRatio",
             "audibleCeilingHz", "maxAudibleLeakageDb", "maxDistanceMeters", "ambientTemperatureCelsius",
@@ -46,6 +47,7 @@ public final class AcousticRangingConfigLoader {
                     .sampleRateHz(integer(values, "sampleRateHz"))
                     .chirpStartHz(decimal(values, "chirpStartHz"))
                     .chirpEndHz(decimal(values, "chirpEndHz"))
+                    .playbackAmplitude(decimal(values, "playbackAmplitude"))
                     .chirpDurationMs(integer(values, "chirpDurationMs"))
                     .captureDurationMs(integer(values, "captureDurationMs"))
                     .responseDelayMs(integer(values, "responseDelayMs"))
