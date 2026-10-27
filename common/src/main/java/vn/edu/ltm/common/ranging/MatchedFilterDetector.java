@@ -40,9 +40,9 @@ public final class MatchedFilterDetector {
             noiseSquares += scores[offset] * scores[offset];
             noiseCount++;
         }
-        double noiseRms = noiseCount == 0 ? Double.MIN_NORMAL : Math.sqrt(noiseSquares / noiseCount);
-        double snrDb = 20.0 * Math.log10(Math.max(best, Double.MIN_NORMAL) / noiseRms);
-        double peakRatio = secondary == 0 ? Double.POSITIVE_INFINITY : best / secondary;
+        double noiseRms = (noiseCount == 0 || noiseSquares == 0) ? 1e-6 : Math.sqrt(noiseSquares / noiseCount);
+        double snrDb = Math.min(100.0, 20.0 * Math.log10(Math.max(best, Double.MIN_NORMAL) / noiseRms));
+        double peakRatio = secondary <= 0 ? 100.0 : Math.min(100.0, best / secondary);
         boolean accepted = snrDb >= config.minSnrDb() && peakRatio >= config.minPeakRatio();
         return new ChirpDetection(bestIndex, snrDb, peakRatio, accepted);
     }

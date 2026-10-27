@@ -17,10 +17,13 @@ import vn.edu.ltm.agent.metrics.OshiMetricsCollector;
 import vn.edu.ltm.agent.monitoring.MonitoringCoordinator;
 import vn.edu.ltm.agent.network.ControlClient;
 import vn.edu.ltm.agent.persistence.AgentDatabase;
+import vn.edu.ltm.agent.ranging.AgentRangingService;
 import vn.edu.ltm.agent.restore.RestoreHandler;
 import vn.edu.ltm.agent.risk.*;
 import vn.edu.ltm.common.protocol.MessageType;
 import vn.edu.ltm.common.lifecycle.AsyncCloseWorkflow;
+import vn.edu.ltm.common.ranging.AcousticRangingConfigLoader;
+import vn.edu.ltm.common.ranging.JavaSoundAudioEndpoint;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -115,6 +118,8 @@ public final class AgentApp extends Application {
         private ControlClient control;
         private MonitoringCoordinator monitoring;
         private ProtectedFolderWatcher watcher;
+        private AgentRangingService ranging;
+        private final java.util.concurrent.atomic.AtomicBoolean capabilitiesPublished = new java.util.concurrent.atomic.AtomicBoolean(false);
         private volatile boolean stopping;
         private boolean fullyClosed;
 
@@ -129,7 +134,10 @@ public final class AgentApp extends Application {
             var queue = new JdbcBackupQueueRepository(database);
             var stability = new FileStabilityChecker(root);
             var restore = new RestoreHandler(root, settings.serverHost(), settings.filePort(), settings.deviceId(), settings.token());
+            var rangingConfig = new AcousticRangingConfigLoader().load();
+            var audioEndpoint = new JavaSoundAudioEndpoint(rangingConfig);
             control = new ControlClient(settings.controlConfig());
+            ranging = new AgentRangingService(settings.deviceId(), control::send, audioEndpoint, rangingConfig);
             control.setInboundHandler(message -> {
                 if (message.type() == MessageType.RESTORE_AVAILABLE) fileTasks.submit(() -> {
                     try { restore.restore(message); }
@@ -137,6 +145,11 @@ public final class AgentApp extends Application {
                         model.warn("Restore failed: " + failure.getMessage());
                     }
                 });
+                else if (message.type() == MessageType.RANGING_START || message.type() == MessageType.RANGING_ABORT) {
+                    if (ranging != null) {
+                        ranging.handleMessage(message);
+                    }
+                }
             });
             var collector = new OshiMetricsCollector();
             monitoring = new MonitoringCoordinator(settings.deviceId(), control,
@@ -170,6 +183,11 @@ public final class AgentApp extends Application {
                 boolean online = control.isRegistered();
                 disconnected.poll(online);
                 model.setConnected(online);
+                if (online && !capabilitiesPublished.getAndSet(true)) {
+                    ranging.publishCapabilities();
+                } else if (!online) {
+                    capabilitiesPublished.set(false);
+                }
                 try (var connection = database.openConnection(); var statement = connection.createStatement();
                      var rows = statement.executeQuery("SELECT COUNT(*) FROM backup_queue WHERE status IN ('PENDING','RETRY')")) {
                     if (rows.next()) model.setQueued(rows.getInt(1));
@@ -199,6 +217,7 @@ public final class AgentApp extends Application {
             if (fullyClosed) return;
             stopping = true;
             scheduler.shutdownNow();
+            if (ranging != null) ranging.close();
             if (control != null) control.close();
             if (monitoring != null) monitoring.close();
             IOException watcherFailure = null;
