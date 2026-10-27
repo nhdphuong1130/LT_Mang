@@ -169,7 +169,13 @@ Typed states:
 
 Raw microphone audio is not transmitted or persisted. Only detected indices and quality statistics cross the network. Audio buffers are short-lived and cleared after processing. The UI must disclose microphone use and allow acoustic ranging to be disabled.
 
-## 12. Calibration and Validation
+## 12. Runtime Configuration (No Hardcoded Ranging Parameters)
+
+All tunable ranging values come from one validated `acoustic-ranging.properties` configuration. This includes enablement, audio-device selectors, sample rate, chirp start/end frequencies, chirp and capture durations, response delay, measurement interval, retry count, confidence/SNR/peak thresholds, audible-leakage limit, rolling-window size, speed-of-sound inputs, maximum distance, and calibration offsets. A packaged properties template provides documented starting values; deployments may override it with a file selected by `ltm.acoustic.config` without recompiling either application.
+
+The configuration loader rejects missing, malformed, and inconsistent values before audio starts. Cross-field validation includes `chirpStartHz > audibleCeilingHz`, `chirpEndHz < sampleRateHz / 2`, increasing chirp bounds, confidence within `[0, 100]`, positive timeouts and distances, and a capture window large enough for the configured maximum distance. Algorithms receive this immutable configuration through constructors; they do not contain duplicated numeric thresholds or timing constants.
+
+## 13. Calibration and Validation
 
 Calibration is performed per Server/Client audio-device pair and includes fixed offset plus an ambient-temperature setting. Validation data must be collected separately from calibration data.
 
@@ -195,7 +201,7 @@ Acceptance requires all of the following:
 
 If the physical laptops fail any hardware or accuracy gate, the product must report the failure honestly. Achieving the target may require an external ultrasonic transducer even though the preferred implementation first attempts to use built-in hardware.
 
-## 13. Test Strategy
+## 14. Test Strategy
 
 ### Unit tests
 
