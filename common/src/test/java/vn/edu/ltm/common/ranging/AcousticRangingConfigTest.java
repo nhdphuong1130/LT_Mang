@@ -42,6 +42,7 @@ class AcousticRangingConfigTest {
                 .chirpDurationMs(20).captureDurationMs(250).responseDelayMs(50)
                 .measurementIntervalMs(500).maxRetries(2).rollingWindow(5)
                 .confidenceThreshold(90).minSnrDb(12).minPeakRatio(2.5)
+                .targetSnrDb(30).targetPeakRatio(5).maxTwoWayErrorSamples(48)
                 .audibleCeilingHz(20_000).maxAudibleLeakageDb(-40)
                 .maxDistanceMeters(10).ambientTemperatureCelsius(25)
                 .calibrationOffsetMillis(0).maxJumpMeters(1.5)

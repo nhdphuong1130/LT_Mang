@@ -7,6 +7,7 @@ public record AcousticRangingConfig(
         int chirpDurationMs, int captureDurationMs, int responseDelayMs,
         int measurementIntervalMs, int maxRetries, int rollingWindow,
         double confidenceThreshold, double minSnrDb, double minPeakRatio,
+        double targetSnrDb, double targetPeakRatio, double maxTwoWayErrorSamples,
         double audibleCeilingHz, double maxAudibleLeakageDb,
         double maxDistanceMeters, double ambientTemperatureCelsius,
         double calibrationOffsetMillis, double maxJumpMeters,
@@ -33,6 +34,9 @@ public record AcousticRangingConfig(
         require(confidenceThreshold >= 0 && confidenceThreshold <= 100,
                 "Confidence threshold must be in [0, 100]");
         require(minPeakRatio > 1, "Minimum peak ratio must exceed one");
+        require(targetSnrDb > minSnrDb, "Target SNR must exceed minimum SNR");
+        require(targetPeakRatio > minPeakRatio, "Target peak ratio must exceed minimum peak ratio");
+        require(maxTwoWayErrorSamples > 0, "Maximum two-way error must be positive");
         require(maxDistanceMeters > 0 && maxJumpMeters > 0, "Distances must be positive");
         require(ambientTemperatureCelsius >= -50 && ambientTemperatureCelsius <= 60,
                 "Ambient temperature is outside the supported range");
@@ -74,6 +78,9 @@ public record AcousticRangingConfig(
         private double confidenceThreshold;
         private double minSnrDb;
         private double minPeakRatio;
+        private double targetSnrDb;
+        private double targetPeakRatio;
+        private double maxTwoWayErrorSamples;
         private double audibleCeilingHz;
         private double maxAudibleLeakageDb;
         private double maxDistanceMeters;
@@ -102,6 +109,9 @@ public record AcousticRangingConfig(
         public Builder confidenceThreshold(double value) { confidenceThreshold = value; return this; }
         public Builder minSnrDb(double value) { minSnrDb = value; return this; }
         public Builder minPeakRatio(double value) { minPeakRatio = value; return this; }
+        public Builder targetSnrDb(double value) { targetSnrDb = value; return this; }
+        public Builder targetPeakRatio(double value) { targetPeakRatio = value; return this; }
+        public Builder maxTwoWayErrorSamples(double value) { maxTwoWayErrorSamples = value; return this; }
         public Builder audibleCeilingHz(double value) { audibleCeilingHz = value; return this; }
         public Builder maxAudibleLeakageDb(double value) { maxAudibleLeakageDb = value; return this; }
         public Builder maxDistanceMeters(double value) { maxDistanceMeters = value; return this; }
@@ -118,7 +128,8 @@ public record AcousticRangingConfig(
             return new AcousticRangingConfig(enabled, playbackMixer, captureMixer, sampleRateHz,
                     chirpStartHz, chirpEndHz, playbackAmplitude, chirpDurationMs, captureDurationMs, responseDelayMs,
                     measurementIntervalMs, maxRetries, rollingWindow, confidenceThreshold, minSnrDb,
-                    minPeakRatio, audibleCeilingHz, maxAudibleLeakageDb, maxDistanceMeters,
+                    minPeakRatio, targetSnrDb, targetPeakRatio, maxTwoWayErrorSamples,
+                    audibleCeilingHz, maxAudibleLeakageDb, maxDistanceMeters,
                     ambientTemperatureCelsius, calibrationOffsetMillis, maxJumpMeters, snrWeight,
                     peakWeight, twoWayWeight, stabilityWeight, hardwareWeight);
         }

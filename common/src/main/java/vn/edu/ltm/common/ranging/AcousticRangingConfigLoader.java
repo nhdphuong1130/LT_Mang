@@ -16,6 +16,7 @@ public final class AcousticRangingConfigLoader {
             "playbackAmplitude",
             "chirpDurationMs", "captureDurationMs", "responseDelayMs", "measurementIntervalMs",
             "maxRetries", "rollingWindow", "confidenceThreshold", "minSnrDb", "minPeakRatio",
+            "targetSnrDb", "targetPeakRatio", "maxTwoWayErrorSamples",
             "audibleCeilingHz", "maxAudibleLeakageDb", "maxDistanceMeters", "ambientTemperatureCelsius",
             "calibrationOffsetMillis", "maxJumpMeters", "snrWeight", "peakWeight", "twoWayWeight",
             "stabilityWeight", "hardwareWeight");
@@ -57,6 +58,9 @@ public final class AcousticRangingConfigLoader {
                     .confidenceThreshold(decimal(values, "confidenceThreshold"))
                     .minSnrDb(decimal(values, "minSnrDb"))
                     .minPeakRatio(decimal(values, "minPeakRatio"))
+                    .targetSnrDb(decimal(values, "targetSnrDb"))
+                    .targetPeakRatio(decimal(values, "targetPeakRatio"))
+                    .maxTwoWayErrorSamples(decimal(values, "maxTwoWayErrorSamples"))
                     .audibleCeilingHz(decimal(values, "audibleCeilingHz"))
                     .maxAudibleLeakageDb(decimal(values, "maxAudibleLeakageDb"))
                     .maxDistanceMeters(decimal(values, "maxDistanceMeters"))
