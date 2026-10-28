@@ -71,4 +71,14 @@ public sealed class DirectLinkStateTests
         Assert.Equal("OPENING_DEVICE", state.Status);
         Assert.Equal("id", state.DeviceId);
     }
+
+    [Theory]
+    [InlineData("Paired", true)]
+    [InlineData("AlreadyPaired", true)]
+    [InlineData("AuthenticationFailure", false)]
+    [InlineData("RejectedByHandler", false)]
+    public void OnlySuccessfulPairingMayOpenTheDevice(string result, bool expected)
+    {
+        Assert.Equal(expected, PairingPolicy.MayOpenDevice(result));
+    }
 }
