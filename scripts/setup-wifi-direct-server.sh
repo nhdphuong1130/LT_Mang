@@ -9,8 +9,13 @@ usage() {
 if [[ $# -lt 2 || $# -gt 4 ]]; then usage; exit 2; fi
 physical_iface=$1
 peer_mac=${2^^}
-profile_name=${3:-ltm-wifi-direct-distance}
-apply_mode=${4:-}
+if [[ ${3:-} == "--apply" ]]; then
+  profile_name="ltm-wifi-direct-distance"
+  apply_mode="--apply"
+else
+  profile_name=${3:-ltm-wifi-direct-distance}
+  apply_mode=${4:-}
+fi
 
 if [[ ! $physical_iface =~ ^[a-zA-Z0-9_.-]+$ ]]; then echo "Invalid interface name" >&2; exit 2; fi
 if [[ ! $peer_mac =~ ^([0-9A-F]{2}:){5}[0-9A-F]{2}$ ]]; then echo "Peer MAC must use AA:BB:CC:DD:EE:FF" >&2; exit 2; fi
