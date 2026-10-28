@@ -102,4 +102,15 @@ public sealed class DirectLinkStateTests
         Assert.True(PairingPolicy.CanAcceptWithoutSecret("DisplayPin"));
         Assert.False(PairingPolicy.CanAcceptWithoutSecret("ProvidePin"));
     }
+
+    [Theory]
+    [InlineData("Paired", false, true)]
+    [InlineData("AlreadyPaired", false, true)]
+    [InlineData("Failed", true, true)]
+    [InlineData("Failed", false, false)]
+    public void ConfirmedPairingStateOverridesUnreliableWifiDirectResult(
+        string result, bool isPaired, bool expected)
+    {
+        Assert.Equal(expected, PairingPolicy.MayOpenDevice(result, isPaired));
+    }
 }

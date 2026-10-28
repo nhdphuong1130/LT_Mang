@@ -47,6 +47,9 @@ public static class PairingPolicy
     public static bool MayOpenDevice(string result) =>
         result is "Paired" or "AlreadyPaired";
 
+    public static bool MayOpenDevice(string result, bool isPaired) =>
+        MayOpenDevice(result) || isPaired;
+
     public static bool CanAcceptWithoutSecret(string pairingKind) =>
         pairingKind is "ConfirmOnly" or "DisplayPin";
 }
@@ -176,11 +179,14 @@ public static class Program
                                     pairingKinds,
                                     DevicePairingProtectionLevel.None);
                                 string pairingStatus = pairing.Status.ToString();
-                                if (!PairingPolicy.MayOpenDevice(pairingStatus)) {
-                                    Emit(DirectLinkState.PairingFailed(device.Name, device.Id, pairingStatus));
+                                bool isPaired = device.Pairing.IsPaired;
+                                if (!PairingPolicy.MayOpenDevice(pairingStatus, isPaired)) {
+                                    Emit(DirectLinkState.PairingFailed(device.Name, device.Id,
+                                        pairingStatus + "; Windows IsPaired=" + isPaired));
                                     return;
                                 }
-                                Emit(DirectLinkState.PairingSucceeded(device.Name, device.Id, pairingStatus));
+                                Emit(DirectLinkState.PairingSucceeded(device.Name, device.Id,
+                                    pairingStatus + "; Windows IsPaired=" + isPaired));
                             } else if (device.Pairing.IsPaired) {
                                 Emit(DirectLinkState.PairingSucceeded(device.Name, device.Id, "AlreadyPaired"));
                             } else {
