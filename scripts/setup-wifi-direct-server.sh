@@ -25,6 +25,38 @@ fi
 command -v nmcli >/dev/null || { echo "nmcli is required" >&2; exit 1; }
 command -v iw >/dev/null || { echo "iw is required" >&2; exit 1; }
 
+normalize_wps_value() {
+  local max_length=$1
+  tr -d '\000-\010\013\014\016-\037\177' |
+    tr '\r\n\t' '   ' |
+    sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' |
+    cut -c1-"$max_length"
+}
+
+read_dmi_value() {
+  local field=$1 fallback=$2 dmi_root=${LTM_DMI_ROOT:-/sys/class/dmi/id} value=""
+  if [[ -r "$dmi_root/$field" ]]; then
+    value=$(normalize_wps_value 64 <"$dmi_root/$field")
+  fi
+  printf '%s' "${value:-$fallback}"
+}
+
+device_name=$(hostnamectl --static 2>/dev/null || hostname 2>/dev/null || true)
+device_name=$(printf '%s' "$device_name" | normalize_wps_value 32)
+[[ -n $device_name ]] || device_name="linux-p2p-device"
+manufacturer=$(read_dmi_value sys_vendor Linux | normalize_wps_value 64)
+model_name=$(read_dmi_value product_name "$device_name" | normalize_wps_value 32)
+model_number=$(read_dmi_value product_version unknown | normalize_wps_value 32)
+country=$(iw reg get 2>/dev/null | awk '
+  /^phy#/ { in_phy = 1 }
+  $1 == "country" {
+    gsub(":", "", $2)
+    if ($2 ~ /^[A-Z][A-Z]$/ && $2 != "00" && fallback == "") fallback = $2
+    if (in_phy && $2 ~ /^[A-Z][A-Z]$/ && $2 != "00") { print $2; found = 1; exit }
+  }
+  END { if (!found && fallback != "") print fallback }
+')
+
 lan_state=$(nmcli -t -f GENERAL.STATE device show "$physical_iface" | cut -d: -f2- || true)
 lan_connection=$(nmcli -t -f GENERAL.CONNECTION device show "$physical_iface" | cut -d: -f2- || true)
 lan_ip=$(nmcli -t -f IP4.ADDRESS device show "$physical_iface" | head -n1 | cut -d: -f2- || true)
@@ -36,6 +68,10 @@ echo "LAN profile   : ${lan_connection:-unknown}"
 echo "LAN IPv4      : ${lan_ip:-unknown}"
 echo "P2P device    : ${p2p_device:-not found}"
 echo "Windows peer  : $peer_mac"
+echo "WPS device name: $device_name"
+echo "WPS vendor    : $manufacturer"
+echo "WPS model     : $model_name ($model_number)"
+echo "WPS country   : ${country:-not available}"
 
 [[ $lan_state == *connected* ]] || { echo "Abort: physical Wi-Fi LAN is not connected" >&2; exit 1; }
 [[ -n $lan_connection && $lan_connection != -- ]] || { echo "Abort: cannot identify active LAN profile" >&2; exit 1; }
@@ -47,6 +83,38 @@ echo "Planned command: nmcli connection up $profile_name"
 if [[ $apply_mode != --apply ]]; then
   echo "Dry run only. Append --apply to create and activate the project P2P profile."
   exit 0
+fi
+
+command -v wpa_cli >/dev/null || { echo "wpa_cli is required in apply mode" >&2; exit 1; }
+if (( EUID != 0 )); then
+  command -v sudo >/dev/null || { echo "sudo is required to configure wpa_supplicant" >&2; exit 1; }
+fi
+
+run_wpa_cli() {
+  if (( EUID == 0 )); then
+    wpa_cli -i "$physical_iface" "$@"
+  else
+    sudo wpa_cli -i "$physical_iface" "$@"
+  fi
+}
+
+configure_wps_value() {
+  local key=$1 value=$2 response
+  if ! response=$(run_wpa_cli set "$key" "$value" 2>&1) || ! grep -Fxq OK <<<"$response"; then
+    echo "Failed to configure WPS $key: ${response:-no response}" >&2
+    return 1
+  fi
+}
+
+echo "Configuring dynamic WPS identity on $physical_iface..."
+configure_wps_value device_name "$device_name"
+configure_wps_value manufacturer "$manufacturer"
+configure_wps_value model_name "$model_name"
+configure_wps_value model_number "$model_number"
+configure_wps_value device_type "1-0050F204-1"
+configure_wps_value config_methods "virtual_push_button"
+if [[ -n $country ]]; then
+  configure_wps_value country "$country"
 fi
 
 rollback() {
