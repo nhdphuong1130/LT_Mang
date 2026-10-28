@@ -20,6 +20,21 @@ public static class DirectLinkState
     public static DirectLinkEvent Searching(string peer) => new("SEARCHING", peer, null, null);
     public static DirectLinkEvent Discovered(string peer, string id) => new("DISCOVERED", peer, id, null);
     public static DirectLinkEvent Listening() => new("LISTENING", "", null, "Wi-Fi Direct listener active; waiting for incoming connection");
+    public static DirectLinkEvent PublisherStarting() => new("PUBLISHER_STARTING", "", null,
+        "Starting Wi-Fi Direct advertisement publisher");
+    public static DirectLinkEvent PublisherStarted() => Listening();
+    public static DirectLinkEvent PublisherAborted(string reason) => new("PUBLISHER_ABORTED", "", null,
+        "Wi-Fi Direct advertisement publisher aborted: " + reason);
+    public static DirectLinkEvent ConnectionRequested(string peer, string id) =>
+        new("CONNECTION_REQUESTED", peer, id, "Incoming Wi-Fi Direct connection request");
+    public static DirectLinkEvent PairingStarted(string peer, string id, string method) =>
+        new("PAIRING", peer, id, "Pairing requested with method: " + method);
+    public static DirectLinkEvent PairingSucceeded(string peer, string id, string result) =>
+        new("PAIRED", peer, id, "Pairing result: " + result);
+    public static DirectLinkEvent PairingFailed(string peer, string id, string result) =>
+        new("PAIRING_FAILED", peer, id, "Pairing result: " + result);
+    public static DirectLinkEvent OpeningDevice(string peer, string id) =>
+        new("OPENING_DEVICE", peer, id, "Opening negotiated Wi-Fi Direct device");
     public static DirectLinkEvent Unavailable(string peer, string message) => new("UNAVAILABLE", peer, null, message);
     public static DirectLinkEvent Connected(string peer, string id) => new("CONNECTED", peer, id, null);
     public static DirectLinkEvent Disconnected(string peer, string id) => new("RECONNECTING", peer, id, "Wi-Fi Direct link disconnected");
