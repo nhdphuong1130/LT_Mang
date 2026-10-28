@@ -62,8 +62,10 @@ printf "|%s" "$@" >>"$LTM_TEST_EVENTS"
 printf "\n" >>"$LTM_TEST_EVENTS"
 if [[ ${1:-} == list ]]; then
   echo "         * P2P-GO"
+elif [[ ${1:-} == dev && ${2:-} == wlp0s20f3 && ${3:-} == info ]]; then
+  printf "Interface wlp0s20f3\n\twiphy 1\n\ttype managed\n"
 elif [[ ${1:-} == reg && ${2:-} == get ]]; then
-  printf "global\ncountry 00: DFS-UNSET\nphy#0 (self-managed)\ncountry VN: DFS-UNSET\n"
+  printf "global\ncountry 00: DFS-UNSET\nphy#0 (self-managed)\ncountry US: DFS-FCC\nphy#1 (self-managed)\ncountry VN: DFS-UNSET\n"
 fi'
 
 make_fake busctl '

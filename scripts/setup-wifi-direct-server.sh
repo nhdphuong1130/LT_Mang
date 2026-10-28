@@ -47,14 +47,24 @@ device_name=$(printf '%s' "$device_name" | normalize_wps_value 32)
 manufacturer=$(read_dmi_value sys_vendor Linux | normalize_wps_value 64)
 model_name=$(read_dmi_value product_name "$device_name" | normalize_wps_value 32)
 model_number=$(read_dmi_value product_version unknown | normalize_wps_value 32)
-country=$(iw reg get 2>/dev/null | awk '
-  /^phy#/ { in_phy = 1 }
+wiphy=$(iw dev "$physical_iface" info 2>/dev/null | awk '$1 == "wiphy" { print $2; exit }')
+country=$(iw reg get 2>/dev/null | awk -v target_wiphy="$wiphy" '
+  $1 == "global" { section = "global"; next }
+  /^phy#/ {
+    section = $1
+    sub(/^phy#/, "", section)
+    next
+  }
   $1 == "country" {
     gsub(":", "", $2)
-    if ($2 ~ /^[A-Z][A-Z]$/ && $2 != "00" && fallback == "") fallback = $2
-    if (in_phy && $2 ~ /^[A-Z][A-Z]$/ && $2 != "00") { print $2; found = 1; exit }
+    if (section == "global" && $2 ~ /^[A-Z][A-Z]$/ && $2 != "00") global_country = $2
+    if (target_wiphy != "" && section == target_wiphy && $2 ~ /^[A-Z][A-Z]$/ && $2 != "00") {
+      print $2
+      found = 1
+      exit
+    }
   }
-  END { if (!found && fallback != "") print fallback }
+  END { if (!found && global_country != "") print global_country }
 ')
 
 lan_state=$(nmcli -t -f GENERAL.STATE device show "$physical_iface" | cut -d: -f2- || true)
