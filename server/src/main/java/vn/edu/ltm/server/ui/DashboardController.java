@@ -58,6 +58,7 @@ public final class DashboardController {
     private String selectedDeviceId;
     private String selectedPathPrefix = "";
     private String selectedSphereDeviceId;
+    private String inspectorDeviceId;
     private boolean rebuildingTree;
     private List<DashboardDataService.DeviceBackupFolder> lastTreeFolders;
     private int lastTreeVersionCount = -1;
@@ -324,7 +325,27 @@ public final class DashboardController {
         if (allowBackupCheck != null) allowBackupCheck.setSelected(item.allowBackup());
         if (allowRestoreCheck != null) allowRestoreCheck.setSelected(item.allowRestore());
         if (dxdiagSummaryArea != null) {
-            dxdiagSummaryArea.setText(formatDxdiagText(item));
+            boolean preserveViewport = item.deviceId().equals(inspectorDeviceId);
+            double scrollTop = dxdiagSummaryArea.getScrollTop();
+            int anchor = dxdiagSummaryArea.getAnchor();
+            int caret = dxdiagSummaryArea.getCaretPosition();
+            String text = formatDxdiagText(item);
+            dxdiagSummaryArea.setText(text);
+            inspectorDeviceId = item.deviceId();
+            if (preserveViewport) {
+                int restoredAnchor = Math.min(anchor, text.length());
+                int restoredCaret = Math.min(caret, text.length());
+                Runnable restoreViewport = () -> {
+                    if (!item.deviceId().equals(inspectorDeviceId) || dxdiagSummaryArea == null) return;
+                    dxdiagSummaryArea.selectRange(restoredAnchor, restoredCaret);
+                    dxdiagSummaryArea.setScrollTop(scrollTop);
+                };
+                restoreViewport.run();
+                Platform.runLater(restoreViewport);
+            } else {
+                dxdiagSummaryArea.positionCaret(0);
+                dxdiagSummaryArea.setScrollTop(0.0);
+            }
         }
     }
 

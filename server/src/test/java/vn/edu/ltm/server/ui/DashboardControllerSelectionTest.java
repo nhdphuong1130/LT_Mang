@@ -3,6 +3,7 @@ package vn.edu.ltm.server.ui;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
+import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
@@ -11,6 +12,7 @@ import javafx.scene.control.TextArea;
 import javafx.scene.control.TreeView;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.VBox;
+import javafx.stage.Stage;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import java.time.Instant;
@@ -21,6 +23,78 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DashboardControllerSelectionTest {
+    @Test
+    void periodicRefreshPreservesDxdiagInspectorScrollForSameClient() throws Exception {
+        var error = new AtomicReference<Throwable>();
+        var latch = new CountDownLatch(1);
+        Platform.runLater(() -> {
+            Stage stage = null;
+            try {
+                var loader = new FXMLLoader(DashboardController.class.getResource("dashboard.fxml"));
+                Parent root = loader.load();
+                DashboardController controller = loader.getController();
+                var model = new DashboardViewModel(Runnable::run);
+                model.login("admin");
+                controller.configure(model, null, null, null, null, null, null, () -> { });
+
+                var first = sphereWithLongInspectorText("CPU 8% RAM 58% Disk 89%");
+                controller.applySnapshot(snapshotWith(first));
+
+                stage = new Stage();
+                stage.setScene(new Scene(root, 1200, 760));
+                stage.show();
+                root.applyCss();
+                root.layout();
+
+                var inspector = (TextArea) loader.getNamespace().get("dxdiagSummaryArea");
+                inspector.setScrollTop(260.0);
+                assertTrue(inspector.getScrollTop() > 0.0, "Test must start with the inspector scrolled down");
+
+                controller.applySnapshot(snapshotWith(
+                        sphereWithLongInspectorText("CPU 9% RAM 59% Disk 89%")));
+
+                Stage finalStage = stage;
+                Platform.runLater(() -> {
+                    try {
+                        assertEquals(260.0, inspector.getScrollTop(), 1.0,
+                                "Auto-refresh of the same Client must preserve inspector scroll position");
+                    } catch (Throwable failure) {
+                        error.set(failure);
+                    } finally {
+                        finalStage.close();
+                        latch.countDown();
+                    }
+                });
+            } catch (Throwable failure) {
+                error.set(failure);
+                if (stage != null) stage.close();
+                latch.countDown();
+            }
+        });
+        assertTrue(latch.await(10, TimeUnit.SECONDS));
+        if (error.get() != null) throw new AssertionError("Test failed on JavaFX thread", error.get());
+    }
+
+    private static DashboardDataService.Snapshot snapshotWith(DashboardDataService.ClientSphereItem sphere) {
+        return new DashboardDataService.Snapshot(
+                List.of(sphere.deviceId() + " — ONLINE"), List.of(), List.of(),
+                List.of(new DashboardDataService.DeviceBackupFolder(
+                        sphere.deviceId(), sphere.displayName(), List.of())),
+                List.of(sphere));
+    }
+
+    private static DashboardDataService.ClientSphereItem sphereWithLongInspectorText(String metrics) {
+        String longValue = "diagnostic ".repeat(80);
+        var dxdiag = new vn.edu.ltm.common.model.DxdiagProfile(
+                "DESKTOP-K5PKS87", "Windows 11", "ASUSTeK", "Vivobook", longValue,
+                longValue, "16 GB", longValue, "DirectX 12", longValue, "NVIDIA",
+                longValue, longValue, longValue, longValue);
+        return new DashboardDataService.ClientSphereItem(
+                "pc-vanphong-B", "Binh", "Windows", true, false, true, true, false,
+                8, 58, 89, null, metrics, dxdiag,
+                vn.edu.ltm.common.model.DistanceTelemetry.waitingForSignal());
+    }
+
     @Test void dashboardRefreshesDistanceAtLeastTwicePerSecond() {
         assertTrue(ServerDashboardApp.DASHBOARD_REFRESH_MILLIS <= 500);
     }
@@ -123,6 +197,7 @@ class DashboardControllerSelectionTest {
         } catch (IllegalStateException alreadyStarted) {
             // Toolkit already initialized
         }
+        Platform.setImplicitExit(false);
     }
 
     @Test
