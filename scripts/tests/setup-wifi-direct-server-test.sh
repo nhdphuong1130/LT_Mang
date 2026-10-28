@@ -58,7 +58,7 @@ case "$*" in
     ;;
   "-g connection.type,wifi-p2p.peer connection show ltm-wifi-direct-distance")
     printf "%s\n%s\n" "${LTM_TEST_PROFILE_TYPE:-wifi-p2p}" \
-      "${LTM_TEST_PROFILE_PEER:-38:7A:0E:A8:91:A8}"
+      "${LTM_TEST_PROFILE_PEER:-38\\:7A\\:0E\\:A8\\:91\\:A8}"
     ;;
   "connection add "*) echo "Connection added" ;;
   "connection up "*) echo "Connection activated" ;;

@@ -143,6 +143,7 @@ if nmcli -t -f NAME connection show | grep -Fxq "$profile_name"; then
   )
   existing_type=${existing_profile[0]:-}
   existing_peer=${existing_profile[1]:-}
+  existing_peer=${existing_peer//\\:/:}
   if [[ $existing_type != wifi-p2p || ${existing_peer^^} != "$peer_mac" ]]; then
     echo "Abort: existing profile $profile_name does not match wifi-p2p peer $peer_mac" >&2
     exit 1
