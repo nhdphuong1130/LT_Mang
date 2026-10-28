@@ -8,6 +8,7 @@
   <PasswordField fx:id="passwordField" promptText="Password (at least 12 characters for setup)" maxWidth="300"/>
   <HBox spacing="10" alignment="CENTER">
     <Button text="Sign in" onAction="#submitLogin"/>
+    <Button text="Điền nhanh Admin" onAction="#fillQuickAdmin"/>
     <Button text="Create first administrator" onAction="#createInitialAdmin"/>
   </HBox>
   <Label fx:id="messageLabel" wrapText="true"/>

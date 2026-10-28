@@ -108,6 +108,20 @@ Sau khi build, các file jar thực thi độc lập (executable uber-jar) sẽ 
    - **Quy tắc bảo mật**: Mật khẩu phải có độ dài **tối thiểu 12 ký tự**. Mật khẩu được băm an toàn bằng **bcrypt (cost factor 12)**.
 3. Bấm **Tạo tài khoản** và đăng nhập vào Dashboard quản trị.
 
+#### Tùy chọn điền nhanh Admin trên máy Server
+
+Tạo file cục bộ `~/.ltm-server/quick-login.properties` (file này nằm ngoài Git):
+
+```properties
+username=admin
+password=mat-khau-admin-hien-tai
+```
+
+Trên Linux nên giới hạn quyền đọc bằng `chmod 600 ~/.ltm-server/quick-login.properties`.
+Tại màn hình đăng nhập, bấm **Điền nhanh Admin** để điền hai ô; nút này không tự đăng nhập
+và không bỏ qua xác thực bcrypt. Có thể đổi đường dẫn bằng system property
+`-Dltm.server.quickLoginFile=/duong/dan/khac.properties`.
+
 ### Bước 2: Cấp phát thiết bị (Device Provisioning)
 1. Trên giao diện Server Dashboard, chuyển sang tab **Thiết bị** (Devices).
 2. Nhập thông tin thiết bị:

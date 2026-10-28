@@ -23,4 +23,20 @@ class LoginControllerTest {
         controller.logout();
         assertFalse(model.canRestore());
     }
+
+    @Test void quickFillReadsConfiguredCredentialsWithoutAuthenticating() throws Exception {
+        Path file = temp.resolve("quick-login.properties");
+        java.nio.file.Files.writeString(file, "username=admin\npassword=local-password-123\n");
+        var db = new Database(temp.resolve("quick-fill.db")); db.initialize();
+        var model = new DashboardViewModel(Runnable::run);
+        var controller = new LoginController(
+                new AdminAuthService(new JdbcAdminUserRepository(db)), model,
+                new QuickLoginCredentialsLoader(file));
+
+        var credentials = controller.quickLoginCredentials().orElseThrow();
+
+        assertEquals("admin", credentials.username());
+        assertEquals("local-password-123", credentials.password());
+        assertFalse(model.canRestore(), "Quick fill must not bypass normal sign-in");
+    }
 }
