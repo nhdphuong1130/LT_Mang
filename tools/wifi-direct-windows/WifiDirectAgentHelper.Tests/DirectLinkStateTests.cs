@@ -84,6 +84,19 @@ public sealed class DirectLinkStateTests
         Assert.Equal(["listener", "publisher"], lifecycle);
     }
 
+    [Fact]
+    public void DisconnectDisposesStaleDeviceBeforeReadvertising()
+    {
+        var lifecycle = new List<string>();
+
+        ConnectionRecovery.Run(
+            disposeDevice: () => lifecycle.Add("dispose-device"),
+            stopPublisher: () => lifecycle.Add("stop-publisher"),
+            startPublisher: () => lifecycle.Add("start-publisher"));
+
+        Assert.Equal(["dispose-device", "stop-publisher", "start-publisher"], lifecycle);
+    }
+
     [Theory]
     [InlineData("Paired", true)]
     [InlineData("AlreadyPaired", true)]

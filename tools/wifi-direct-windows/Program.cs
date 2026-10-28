@@ -63,6 +63,16 @@ public static class AdvertisementStartup
     }
 }
 
+public static class ConnectionRecovery
+{
+    public static void Run(Action disposeDevice, Action stopPublisher, Action startPublisher)
+    {
+        disposeDevice();
+        stopPublisher();
+        startPublisher();
+    }
+}
+
 public static class Program
 {
     public static async Task<int> Main(string[] args)
@@ -198,18 +208,36 @@ public static class Program
                             parameters.PreferenceOrderedConfigurationMethods.Add(configurationMethod);
                             parameters.PreferredPairingProcedure = WiFiDirectPairingProcedure.GroupOwnerNegotiation;
                             Emit(DirectLinkState.OpeningDevice(device.Name, device.Id));
-                            activeDevice = await WiFiDirectDevice.FromIdAsync(device.Id, parameters);
-                            if (activeDevice == null) {
+                            WiFiDirectDevice? connectedDevice = await WiFiDirectDevice.FromIdAsync(device.Id, parameters);
+                            if (connectedDevice == null) {
                                 Emit(DirectLinkState.Unavailable(device.Name,
                                     "Windows returned no Wi-Fi Direct device after pairing"));
                                 return;
                             }
+                            activeDevice = connectedDevice;
                             Emit(DirectLinkState.Connected(device.Name, device.Id));
-                            activeDevice.ConnectionStatusChanged += (_, _) => {
-                                if (activeDevice.ConnectionStatus == WiFiDirectConnectionStatus.Connected) {
+                            connectedDevice.ConnectionStatusChanged += (_, _) => {
+                                if (connectedDevice.ConnectionStatus == WiFiDirectConnectionStatus.Connected) {
                                     Emit(DirectLinkState.Connected(device.Name, device.Id));
                                 } else {
                                     Emit(DirectLinkState.Disconnected(device.Name, device.Id));
+                                    if (ReferenceEquals(
+                                            Interlocked.CompareExchange(ref activeDevice, null, connectedDevice),
+                                            connectedDevice)) {
+                                        try {
+                                            ConnectionRecovery.Run(
+                                                connectedDevice.Dispose,
+                                                publisher.Stop,
+                                                () => {
+                                                    Emit(DirectLinkState.PublisherStarting());
+                                                    publisher.Start();
+                                                });
+                                        } catch (Exception recoveryFailure) {
+                                            Emit(DirectLinkState.Unavailable(device.Name,
+                                                recoveryFailure.GetType().Name + ": Re-advertisement failed: "
+                                                + recoveryFailure.Message));
+                                        }
+                                    }
                                 }
                             };
                         } catch (Exception ex) {
