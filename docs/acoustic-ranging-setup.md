@@ -19,6 +19,9 @@ Hệ thống kết hợp đo khoảng cách vật lý lai (Hybrid Distance):
 > **Trạng Thái Kiểm Định Thực Địa (Field Accuracy Status):**
 > Cho đến khi hoàn tất đo kiểm thực tế trên hai laptop vật lý với bộ dữ liệu kiểm định độc lập (held-out validation dataset), hệ thống **tuyệt đối không tuyên bố đạt độ chính xác >90% trong phạm vi 5 cm trên thực địa**. Trạng thái hiện tại được ghi nhận là: `EXPLICITLY_INCOMPLETE_PENDING_TWO_LAPTOP_BENCHMARK`.
 
+> [!NOTE]
+> **Trạng thái transport Wi-Fi Direct (28/10/2026):** Hai laptop đã ghép cặp thành công, Windows helper báo `CONNECTED`, Linux đọc được station RSSI trên interface nhóm P2P và LAN hạ tầng vẫn hoạt động song song. Đây là xác nhận kết nối mạng trực tiếp, không phải xác nhận độ chính xác đo khoảng cách. Bootstrap WPS hiện được suy ra động bởi `scripts/setup-wifi-direct-server.sh`; không cần hardcode hostname, model, country, interface hay peer MAC trong mã nguồn.
+
 ---
 
 ## 2. Kiểm Tra Phần Cứng & Mixer Âm Thanh (Hardware & Audio Mixers)

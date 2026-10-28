@@ -6,7 +6,7 @@
 
 **Tech Stack:** Java 21, Maven, Apache Commons Math 3.6.1, Jackson, JavaFX, JUnit 6, Linux `iw`/NetworkManager/wpa_supplicant, Windows Wi-Fi Direct APIs.
 
-**Status (2026-10-24):** Automated Java/.NET tests, packaging, Windows helper publishing, and shell syntax checks pass. Real Windows pairing, P2P station RSSI, calibration, and the end-to-end runtime smoke test remain pending.
+**Status (updated 2026-10-28):** Automated Java/.NET tests, packaging, Windows helper publishing, and shell regression/syntax checks pass. Real Windows pairing now reaches `CONNECTED`; Linux and Windows retain the infrastructure LAN while joining the P2P subnet, Linux reads the authorized Windows station RSSI, and bidirectional P2P traffic has been smoke-tested. Dynamic WPS bootstrap removes the previously required machine-specific manual `wpa_cli set ...` sequence. RSSI/acoustic calibration, held-out two-laptop distance validation, and the broader TC01–TC17 manual acceptance pass remain pending; no >90% field-accuracy claim is made.
 
 ---
 

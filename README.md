@@ -198,21 +198,29 @@ powershell -ExecutionPolicy Bypass -File .\scripts\check-wifi-direct-windows.ps1
 
 Kết quả Windows phải có Microsoft Wi-Fi Direct Virtual Adapter. Adapter ở trạng thái `Disconnected` trước khi ghép cặp là bình thường.
 
-### 8.2. Ghép cặp một lần
+### 8.2. Ghép cặp và khởi tạo lại liên kết
 
-Build và chạy helper Windows theo [hướng dẫn riêng](tools/wifi-direct-windows/README.md). Trên Linux, trước tiên chạy dry-run:
+Build helper Windows theo [hướng dẫn riêng](tools/wifi-direct-windows/README.md). Trên Windows phải chạy listener trước và giữ cửa sổ mở cho đến khi xuất hiện `LISTENING`:
+
+```powershell
+.\WifiDirectAgentHelper.exe --listen
+```
+
+Trên Linux, trước tiên chạy dry-run với interface và MAC P2P lấy từ chính hai máy đang dùng:
 
 ```bash
-./scripts/setup-wifi-direct-server.sh wlp0s20f3 CE:C5:30:08:CF:12 ltm-wifi-direct-distance
+./scripts/setup-wifi-direct-server.sh <wifi-interface> <windows-p2p-mac> ltm-wifi-direct-distance
 ```
 
 Sau khi kiểm tra đúng interface và MAC P2P của Windows, thêm `--apply`:
 
 ```bash
-./scripts/setup-wifi-direct-server.sh wlp0s20f3 CE:C5:30:08:CF:12 ltm-wifi-direct-distance --apply
+./scripts/setup-wifi-direct-server.sh <wifi-interface> <windows-p2p-mac> ltm-wifi-direct-distance --apply
 ```
 
-Ví dụ `CE:C5:...` phải được thay bằng MAC của **Microsoft Wi-Fi Direct Virtual Adapter đang Up** sau khi helper chạy. Không dùng MAC `CC:C5:...` của card Wi-Fi vật lý; trên máy đã kiểm tra, hai adapter ảo từng xuất hiện với MAC bắt đầu bằng `CE:C5:...` và `C2:C5:...`.
+Không dùng MAC của card Wi-Fi vật lý. Lấy MAC của **Microsoft Wi-Fi Direct Virtual Adapter** bằng `Get-NetAdapter -IncludeHidden` và đối chiếu peer Linux phát hiện được.
+
+Script tự lấy hostname, hãng/model máy và regulatory country tại thời điểm chạy, sau đó cấu hình `wpa_supplicant` cho WPS push-button trước khi tạo profile. Vì vậy không cần chạy thủ công chuỗi `wpa_cli set ...` sau khi interface hoặc driver được khởi tạo lại. Các giá trị nhận dạng máy, interface, peer MAC và country không được hardcode trong script. Ở chế độ `--apply`, script có thể yêu cầu `sudo` để truy cập control socket của `wpa_supplicant`.
 
 Script chỉ quản lý profile có tiền tố `ltm-wifi-direct-`. Nếu P2P làm mất LAN, script tự gỡ profile vừa tạo và bật lại profile LAN. Dừng liên kết bằng:
 
@@ -230,6 +238,8 @@ iw dev <p2p-group-interface> station dump
 ```
 
 MAC station phải trùng `localP2pMac` do Agent báo. Dashboard chỉ hiển thị mét khi nguồn là `WIFI_DIRECT_SERVER_STATION`; RSSI của SSID/router cũ bị bỏ qua.
+
+Kết nối transport được xác nhận khi Windows báo `CONNECTED`, Linux có interface nhóm `p2p-…`, station ở trạng thái `authorized/associated`, và hai đầu trao đổi được gói tin trên subnet P2P. Việc này chỉ xác nhận liên kết trực tiếp; không phải bằng chứng cho độ chính xác khoảng cách.
 
 ### 8.4. Hiệu chuẩn có bằng chứng
 
