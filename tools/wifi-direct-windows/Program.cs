@@ -42,8 +42,13 @@ public static class DirectLinkState
 
 public static class PairingPolicy
 {
+    public const string AutomaticConfigurationMethod = "PushButton";
+
     public static bool MayOpenDevice(string result) =>
         result is "Paired" or "AlreadyPaired";
+
+    public static bool CanAcceptWithoutSecret(string pairingKind) =>
+        pairingKind is "ConfirmOnly" or "DisplayPin";
 }
 
 public static class AdvertisementStartup
@@ -131,6 +136,10 @@ public static class Program
             var publisher = new WiFiDirectAdvertisementPublisher();
             publisher.Advertisement.ListenStateDiscoverability = WiFiDirectAdvertisementListenStateDiscoverability.Normal;
             publisher.Advertisement.IsAutonomousGroupOwnerEnabled = false;
+            WiFiDirectConfigurationMethod configurationMethod = Enum.Parse<WiFiDirectConfigurationMethod>(
+                PairingPolicy.AutomaticConfigurationMethod);
+            publisher.Advertisement.SupportedConfigurationMethods.Clear();
+            publisher.Advertisement.SupportedConfigurationMethods.Add(configurationMethod);
             AttachPublisherDiagnostics(publisher);
             Emit(DirectLinkState.PublisherStarting());
 
@@ -149,14 +158,22 @@ public static class Program
                             if (device.Pairing.CanPair && !device.Pairing.IsPaired) {
                                 var custom = device.Pairing.Custom;
                                 custom.PairingRequested += (pairingSender, pairingArgs) => {
+                                    string pairingKind = pairingArgs.PairingKind.ToString();
                                     Emit(DirectLinkState.PairingStarted(device.Name, device.Id,
-                                        pairingArgs.PairingKind.ToString()));
-                                    pairingArgs.Accept();
+                                        pairingKind));
+                                    if (PairingPolicy.CanAcceptWithoutSecret(pairingKind)) {
+                                        pairingArgs.Accept();
+                                    } else {
+                                        Emit(DirectLinkState.PairingFailed(device.Name, device.Id,
+                                            pairingKind + " requires an external PIN; automatic mode uses PushButton"));
+                                    }
                                 };
+                                DevicePairingKinds pairingKinds =
+                                    WiFiDirectConnectionParameters.GetDevicePairingKinds(configurationMethod);
                                 Emit(DirectLinkState.PairingStarted(device.Name, device.Id,
-                                    "ConfirmOnly|ProvidePin|DisplayPin"));
+                                    configurationMethod + ":" + pairingKinds));
                                 DevicePairingResult pairing = await custom.PairAsync(
-                                    DevicePairingKinds.ConfirmOnly | DevicePairingKinds.ProvidePin | DevicePairingKinds.DisplayPin,
+                                    pairingKinds,
                                     DevicePairingProtectionLevel.None);
                                 string pairingStatus = pairing.Status.ToString();
                                 if (!PairingPolicy.MayOpenDevice(pairingStatus)) {
@@ -172,6 +189,8 @@ public static class Program
                             }
 
                             var parameters = new WiFiDirectConnectionParameters { GroupOwnerIntent = 0 };
+                            parameters.PreferenceOrderedConfigurationMethods.Add(configurationMethod);
+                            parameters.PreferredPairingProcedure = WiFiDirectPairingProcedure.GroupOwnerNegotiation;
                             Emit(DirectLinkState.OpeningDevice(device.Name, device.Id));
                             activeDevice = await WiFiDirectDevice.FromIdAsync(device.Id, parameters);
                             if (activeDevice == null) {

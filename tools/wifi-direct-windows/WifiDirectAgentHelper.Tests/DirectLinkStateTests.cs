@@ -93,4 +93,13 @@ public sealed class DirectLinkStateTests
     {
         Assert.Equal(expected, PairingPolicy.MayOpenDevice(result));
     }
+
+    [Fact]
+    public void AutomaticPairingUsesPushButtonWithoutAConfiguredPin()
+    {
+        Assert.Equal("PushButton", PairingPolicy.AutomaticConfigurationMethod);
+        Assert.True(PairingPolicy.CanAcceptWithoutSecret("ConfirmOnly"));
+        Assert.True(PairingPolicy.CanAcceptWithoutSecret("DisplayPin"));
+        Assert.False(PairingPolicy.CanAcceptWithoutSecret("ProvidePin"));
+    }
 }
