@@ -90,52 +90,75 @@ public final class DashboardDataService {
     private final IncidentRepository incidents;
     private final SessionRegistry sessions;
     private final RealtimeDistanceTracker distanceTracker;
+    private final vn.edu.ltm.server.audit.AuditLogRepository auditLogs;
 
     public DashboardDataService(Database database, DeviceRepository devices, MetricsRepository metrics, IncidentRepository incidents) {
-        this(database, devices, metrics, incidents, null, new RealtimeDistanceTracker());
+        this(database, devices, metrics, incidents, null, new RealtimeDistanceTracker(), null);
     }
 
     public DashboardDataService(Database database, DeviceRepository devices, MetricsRepository metrics,
                                 IncidentRepository incidents, SessionRegistry sessions) {
-        this(database, devices, metrics, incidents, sessions, new RealtimeDistanceTracker());
+        this(database, devices, metrics, incidents, sessions, new RealtimeDistanceTracker(), null);
     }
 
     public DashboardDataService(Database database, DeviceRepository devices, MetricsRepository metrics,
                                 IncidentRepository incidents, SessionRegistry sessions, RealtimeDistanceTracker distanceTracker) {
+        this(database, devices, metrics, incidents, sessions, distanceTracker, null);
+    }
+
+    public DashboardDataService(Database database, DeviceRepository devices, MetricsRepository metrics,
+                                IncidentRepository incidents, SessionRegistry sessions,
+                                RealtimeDistanceTracker distanceTracker,
+                                vn.edu.ltm.server.audit.AuditLogRepository auditLogs) {
         this.database = database;
         this.devices = devices;
         this.metrics = metrics;
         this.incidents = incidents;
         this.sessions = sessions;
         this.distanceTracker = distanceTracker != null ? distanceTracker : new RealtimeDistanceTracker();
+        this.auditLogs = auditLogs;
     }
+
+    private record EventEntry(Instant timestamp, String line) { }
 
     public Snapshot load() throws SQLException {
         var deviceRows = new ArrayList<String>();
         var incidentRows = new ArrayList<String>();
+        var allEvents = new ArrayList<EventEntry>();
         var sphereItems = new ArrayList<ClientSphereItem>();
         var deviceList = devices.findAll();
+        var dtf = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(java.time.ZoneId.systemDefault());
+
         for (var device : deviceList) {
             var latest = metrics.findLatest(device.deviceId());
             double cpu = latest.map(SystemMetrics::cpuPercent).orElse(0.0);
             double ram = latest.map(SystemMetrics::ramPercent).orElse(0.0);
             double disk = latest.map(SystemMetrics::diskPercent).orElse(0.0);
             Double temp = latest.map(SystemMetrics::temperatureCelsius).orElse(null);
-            String summary = latest.map(sample -> String.format(Locale.ROOT,
-                    "CPU %.0f%%  RAM %.0f%%  Disk %.0f%%  Temp %s%s",
-                    sample.cpuPercent(), sample.ramPercent(), sample.diskPercent(),
-                    sample.temperatureCelsius() == null ? "N/A" : String.format(Locale.ROOT, "%.0f°C", sample.temperatureCelsius()),
-                    sample.batteryPercent() == null ? "" : String.format(Locale.ROOT, "  Pin %.0f%% (%s)",
-                            sample.batteryPercent(), sample.charging() ? "Sạc" : "Rời")))
-                    .orElse("No metrics");
+            boolean isOnline = device.status() == Device.Status.ONLINE && !device.isolated();
+            final Double effectiveTemp = temp;
+            String summary = isOnline
+                    ? latest.map(sample -> String.format(Locale.ROOT,
+                            "CPU %.0f%%  RAM %.0f%%  Disk %.0f%%  Temp %s%s",
+                            sample.cpuPercent(), sample.ramPercent(), sample.diskPercent(),
+                            effectiveTemp == null ? "N/A" : String.format(Locale.ROOT, "%.0f°C", effectiveTemp),
+                            sample.batteryPercent() == null ? "" : String.format(Locale.ROOT, "  Pin %.0f%% (%s)",
+                                    sample.batteryPercent(), sample.charging() ? "Sạc" : "Rời")))
+                            .orElse("No metrics")
+                    : (device.isolated() ? "CÔ LẬP (Ngắt mạng)" : "OFFLINE (Mất kết nối)");
             var deviceIncidents = incidents.findAll(device.deviceId());
             boolean hasOpenRisk = false;
             for (var incident : deviceIncidents) {
                 if (incident.status() != RiskEvent.Status.RESOLVED) hasOpenRisk = true;
-                incidentRows.add(device.deviceId() + " — " + incident.riskType() + " — " + incident.status()
-                        + " — " + incident.message());
+                Instant timestamp = (incident.status() == RiskEvent.Status.RESOLVED && incident.resolvedAt() != null)
+                        ? incident.resolvedAt()
+                        : (incident.updatedAt() != null ? incident.updatedAt() : incident.openedAt());
+                String timeStr = dtf.format(timestamp);
+                String line = "[" + timeStr + "] " + device.deviceId() + " — " + incident.riskType() + " — " + incident.status()
+                        + " — " + incident.message();
+                allEvents.add(new EventEntry(timestamp, line));
             }
-            boolean over80 = latest.isPresent() && (cpu >= 80.0 || ram >= 80.0 || disk >= 80.0 || (temp != null && temp >= 80.0));
+            boolean over80 = isOnline && latest.isPresent() && (cpu >= 80.0 || ram >= 80.0 || disk >= 80.0 || (temp != null && temp >= 80.0));
             boolean alertState = over80 || hasOpenRisk;
             String permTag = (!device.allowBackup() || !device.allowRestore())
                     ? " [HẠN CHẾ:" + (device.allowBackup() ? "" : " Chặn-Backup") + (device.allowRestore() ? "" : " Chặn-NhậnFile") + "]"
@@ -149,7 +172,6 @@ public final class DashboardDataService {
                     : DxdiagProfile.unknown(device.deviceId(), device.platform());
             String liveIp = sessions == null ? null : sessions.find(device.deviceId()).map(AgentSession::remoteAddress).orElse(null);
             DxdiagProfile dxdiag = syncWithLiveTelemetry(baseDx, latest, liveIp);
-            boolean isOnline = device.status() == Device.Status.ONLINE && !device.isolated();
             String probeIp = liveIp != null ? liveIp : extractIpv4(dxdiag.networkSummary());
             DistanceTelemetry dist = distanceTracker.getOrProbe(device.deviceId(), probeIp, isOnline);
             String distTag = dist.hasPhysicalDistance()
@@ -191,6 +213,20 @@ public final class DashboardDataService {
                     .sorted()
                     .toList();
             folders.add(new DeviceBackupFolder(device.deviceId(), device.displayName(), paths));
+        }
+        if (auditLogs != null) {
+            var recentAudits = auditLogs.findRecent(100);
+            for (var entry : recentAudits) {
+                Instant timestamp = entry.occurredAt();
+                String timeStr = dtf.format(timestamp);
+                String line = "[" + timeStr + "] " + (entry.deviceId() != null ? entry.deviceId() : "HỆ THỐNG")
+                        + " — " + entry.action() + " — " + entry.details();
+                allEvents.add(new EventEntry(timestamp, line));
+            }
+        }
+        allEvents.sort((a, b) -> b.timestamp().compareTo(a.timestamp()));
+        for (var ev : allEvents) {
+            incidentRows.add(ev.line());
         }
         return new Snapshot(List.copyOf(deviceRows), List.copyOf(incidentRows), List.copyOf(versions),
                 List.copyOf(folders), List.copyOf(sphereItems));

@@ -63,22 +63,35 @@ public record DistanceTelemetry(
     public boolean hasPhysicalDistance() {
         return estimatedMeters >= 0.0
                 && (ACOUSTIC_SOURCE.equals(measurementSource)
-                || (VERIFIED_DIRECT_SOURCE.equals(measurementSource) && directLinkStatus == DirectLinkStatus.CONNECTED));
+                || (VERIFIED_DIRECT_SOURCE.equals(measurementSource)
+                && directLinkStatus == DirectLinkStatus.CONNECTED));
+    }
+
+    public boolean hasSignal() {
+        return rssiFilteredDbm > -99.0;
     }
 
     public String badgeText() {
         if (!isOnline()) {
-            return "📍 Khoảng cách: OFFLINE";
+            return "Khoảng cách: OFFLINE";
         }
-        if (!hasPhysicalDistance()) {
-            return rttMs >= 0.0
-                    ? String.format(Locale.ROOT, "📍 Chờ RSSI | RTT %.1f ms | %d Hop", rttMs, Math.max(1, hopCount))
-                    : "📍 Đang chờ tín hiệu RSSI từ Client";
+        if (hasPhysicalDistance() && ACOUSTIC_SOURCE.equals(measurementSource)) {
+            return String.format(Locale.ROOT, "~%.2f m [Âm học] | RTT %.0f ms", estimatedMeters, Math.max(0.0, rttMs));
         }
-        if (ACOUSTIC_SOURCE.equals(measurementSource)) {
-            return String.format(Locale.ROOT, "📍 ~%.2f m [Âm học] | RTT %.0f ms", estimatedMeters, Math.max(0.0, rttMs));
+        if (hasPhysicalDistance()) {
+            if (rssiFilteredDbm > -99.0) {
+                return String.format(Locale.ROOT, "~%.2f m | RTT %.0f ms | %.0f dBm (%d Hop)",
+                        estimatedMeters, Math.max(0.0, rttMs), rssiFilteredDbm, Math.max(1, hopCount));
+            }
+            return String.format(Locale.ROOT, "~%.2f m | RTT %.0f ms (%d Hop)",
+                    estimatedMeters, Math.max(0.0, rttMs), Math.max(1, hopCount));
         }
-        return String.format(Locale.ROOT, "📍 ~%.2f m | RTT %.0f ms | %.0f dBm (%d Hop)",
-                estimatedMeters, Math.max(0.0, rttMs), rssiFilteredDbm, Math.max(0, hopCount));
+        if (rssiFilteredDbm > -99.0) {
+            return String.format(Locale.ROOT, "Sóng Wi-Fi: %.0f dBm | RTT %.0f ms (%d Hop)",
+                    rssiFilteredDbm, Math.max(0.0, rttMs), Math.max(1, hopCount));
+        }
+        return rttMs >= 0.0
+                ? String.format(Locale.ROOT, "Chờ RSSI | RTT %.1f ms | %d Hop", rttMs, Math.max(1, hopCount))
+                : "Chờ RSSI từ Client";
     }
 }

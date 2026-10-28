@@ -25,6 +25,7 @@ import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 
 public final class RestoreService {
+    private static final String DEVICE_SERVICE_ACTOR = "system";
     private static final Duration DEFAULT_CLAIM_LEASE = Duration.ofMinutes(2);
     private static final ReentrantLock[] OFFER_LOCKS = new ReentrantLock[256];
     static { for (int i = 0; i < OFFER_LOCKS.length; i++) OFFER_LOCKS[i] = new ReentrantLock(); }
@@ -75,14 +76,33 @@ public final class RestoreService {
 
     public RestoreJob request(long backupVersionId, String targetDeviceId, String adminUsername) throws SQLException {
         auth.requireAuthenticated(adminUsername);
+        var backup = jobs.backup(backupVersionId)
+                .orElseThrow(() -> new IllegalArgumentException("Backup version does not exist"));
+        return createRequest(backup, targetDeviceId, adminUsername);
+    }
+
+    public RestoreJob requestForDevice(long backupVersionId, String targetDeviceId) throws SQLException {
+        if (targetDeviceId == null || targetDeviceId.isBlank()) {
+            throw new IllegalArgumentException("Target device is required");
+        }
+        var backup = jobs.backup(backupVersionId)
+                .orElseThrow(() -> new IllegalArgumentException("Backup version does not exist"));
+        String trimmedTarget = targetDeviceId.trim();
+        if (!backup.deviceId().equals(trimmedTarget)) {
+            throw new SecurityException("A device may restore only its own backups");
+        }
+        return createRequest(backup, trimmedTarget, DEVICE_SERVICE_ACTOR);
+    }
+
+    private RestoreJob createRequest(RestoreJobRepository.BackupMetadata backup, String targetDeviceId,
+                                     String actor) throws SQLException {
         if (targetDeviceId == null || targetDeviceId.isBlank()) throw new IllegalArgumentException("Target device is required");
         String trimmedTarget = targetDeviceId.trim();
         if (provisioning != null && !provisioning.isRestoreAllowed(trimmedTarget)) {
             throw new IllegalStateException("Thiết bị [" + trimmedTarget + "] đang bị hạn chế quyền nhận file hoặc đang bị cô lập");
         }
-        var backup = jobs.backup(backupVersionId).orElseThrow(() -> new IllegalArgumentException("Backup version does not exist"));
         Instant now = clock.instant();
-        var job = new RestoreJob(UUID.randomUUID(), backupVersionId, trimmedTarget, adminUsername,
+        var job = new RestoreJob(UUID.randomUUID(), backup.versionId(), trimmedTarget, actor,
                 now.plusSeconds(600), RestoreJob.Status.PENDING, now, null, null);
         jobs.create(job);
         if (!backup.deviceId().equals(job.deviceId()) && backups != null) {
@@ -93,8 +113,8 @@ public final class RestoreService {
                 throw new IllegalStateException("Cannot copy backup to target device folder", failure);
             }
         }
-        jobs.audit(now, adminUsername, "RESTORE_REQUEST", job.deviceId(),
-                "job=" + job.id() + ", version=" + backupVersionId + ", sourceDevice=" + backup.deviceId());
+        jobs.audit(now, actor, "RESTORE_REQUEST", job.deviceId(),
+                "job=" + job.id() + ", version=" + backup.versionId() + ", sourceDevice=" + backup.deviceId());
         notifyPending(job.deviceId());
         return jobs.find(job.id()).orElseThrow();
     }

@@ -16,14 +16,21 @@ public final class FileRestoreHandler implements Runnable {
     private final FileTransferHeader header;
     private final DeviceProvisioningService provisioning;
     private final RestoreService restores;
+    private final vn.edu.ltm.server.audit.AuditLogRepository auditLogs;
     private final FileTransferCodec codec = new FileTransferCodec();
 
     public FileRestoreHandler(Socket socket, FileTransferHeader header, DeviceProvisioningService provisioning,
                               RestoreService restores) {
+        this(socket, header, provisioning, restores, null);
+    }
+
+    public FileRestoreHandler(Socket socket, FileTransferHeader header, DeviceProvisioningService provisioning,
+                              RestoreService restores, vn.edu.ltm.server.audit.AuditLogRepository auditLogs) {
         this.socket = socket;
         this.header = header;
         this.provisioning = provisioning;
         this.restores = restores;
+        this.auditLogs = auditLogs;
     }
 
     @Override public void run() {
@@ -82,6 +89,10 @@ public final class FileRestoreHandler implements Runnable {
             }
             TransferResult result = codec.readResult(socket.getInputStream());
             restores.complete(claim.jobId(), result);
+            if (auditLogs != null) {
+                auditLogs.log(java.time.Instant.now(), header.deviceId(), "RESTORE_DOWNLOAD", header.deviceId(),
+                        "Download khôi phục file: [" + header.relativePath() + "] (" + header.fileSize() + " B, " + result.status() + ")");
+            }
         } catch (Exception failure) {
             if (claim != null) try {
                 restores.complete(claim.jobId(), new TransferResult(TransferResult.Status.ERROR, "Restore transfer failed"));

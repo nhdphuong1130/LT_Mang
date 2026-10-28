@@ -21,6 +21,8 @@ final class RuntimeSwitch<T extends AutoCloseable> implements AutoCloseable {
         return started;
     }
 
+    synchronized T active() { return active; }
+
     @Override public synchronized void close() throws Exception {
         if (closed) return;
         closeRequested = true;

@@ -13,7 +13,6 @@ import java.util.regex.Pattern;
 
 /** Reads RSSI observed by the Linux Server for peers connected to a real Wi-Fi Direct group. */
 public final class LinuxP2pStationCollector {
-    static final long RESCAN_INTERVAL_MILLIS = 2_000;
     private static final Pattern STATION_BLOCK = Pattern.compile(
             "(?ms)^Station\\s+([0-9a-fA-F:-]{17})\\s+.*?\\R(.*?)(?=^Station|\\z)");
     private static final Pattern SIGNAL = Pattern.compile("(?m)^\\s*signal:\\s*(-?[0-9.]+)\\s*dBm");
@@ -34,9 +33,6 @@ public final class LinuxP2pStationCollector {
 
     private final CommandRunner runner;
     private final Clock clock;
-    private final java.util.concurrent.atomic.AtomicLong lastRescanNanos = new java.util.concurrent.atomic.AtomicLong(0);
-    private final java.util.concurrent.atomic.AtomicBoolean rescanInProgress = new java.util.concurrent.atomic.AtomicBoolean(false);
-    private volatile Instant fallbackSampledAt;
 
     public LinuxP2pStationCollector() {
         this(LinuxP2pStationCollector::runCommand, Clock.systemUTC());
@@ -50,45 +46,14 @@ public final class LinuxP2pStationCollector {
     public List<StationSample> collect() {
         if (!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("linux")) return List.of();
         try {
-            triggerAsyncRescanIfNeeded();
             List<StationSample> result = new ArrayList<>();
             for (String iface : parseGroupInterfaces(runner.run(List.of("iw", "dev")))) {
                 result.addAll(parseStationDump(iface,
                         runner.run(List.of("iw", "dev", iface, "station", "dump")), clock.instant()));
             }
-            if (result.isEmpty()) {
-                try {
-                    String nmcliOutput = runner.run(List.of("nmcli", "-t", "-f", "BSSID,SIGNAL,SSID", "device", "wifi", "list", "--rescan", "no"));
-                    Instant sampledAt = fallbackSampledAt;
-                    if (sampledAt == null) {
-                        synchronized (this) {
-                            if (fallbackSampledAt == null) fallbackSampledAt = clock.instant();
-                            sampledAt = fallbackSampledAt;
-                        }
-                    }
-                    result.addAll(parseNmcliWifiDirectList(nmcliOutput, sampledAt));
-                } catch (Exception ignored) { }
-            }
             return List.copyOf(result);
         } catch (Exception unavailable) {
             return List.of();
-        }
-    }
-
-    private void triggerAsyncRescanIfNeeded() {
-        long now = System.nanoTime();
-        if (now - lastRescanNanos.get() > TimeUnit.MILLISECONDS.toNanos(RESCAN_INTERVAL_MILLIS)
-                && rescanInProgress.compareAndSet(false, true)) {
-            Thread.ofVirtual().name("wifi-rescan-trigger").start(() -> {
-                try {
-                    runner.run(List.of("nmcli", "device", "wifi", "rescan"));
-                    fallbackSampledAt = clock.instant();
-                } catch (Exception ignored) { }
-                finally {
-                    lastRescanNanos.set(System.nanoTime());
-                    rescanInProgress.set(false);
-                }
-            });
         }
     }
 
@@ -102,7 +67,8 @@ public final class LinuxP2pStationCollector {
                 candidate = trimmed.substring("Interface ".length()).strip();
             } else if (candidate != null && trimmed.startsWith("type ")) {
                 String type = trimmed.substring("type ".length()).strip();
-                if ("P2P-GO".equalsIgnoreCase(type) && isGroupInterface(candidate)) result.add(candidate);
+                if (("P2P-GO".equalsIgnoreCase(type) || "P2P-client".equalsIgnoreCase(type))
+                        && isGroupInterface(candidate)) result.add(candidate);
                 candidate = null;
             }
         }
@@ -121,28 +87,6 @@ public final class LinuxP2pStationCollector {
             if (value != null) {
                 try { result.add(new StationSample(interfaceName, stationMatcher.group(1), Double.parseDouble(value), sampledAt)); }
                 catch (IllegalArgumentException ignored) { }
-            }
-        }
-        return List.copyOf(result);
-    }
-
-    static List<StationSample> parseNmcliWifiDirectList(String output, Instant sampledAt) {
-        if (output == null || output.isBlank()) return List.of();
-        List<StationSample> result = new ArrayList<>();
-        for (String line : output.lines().toList()) {
-            String trimmed = line.strip();
-            if (trimmed.isEmpty()) continue;
-            String[] parts = trimmed.split("(?<!\\\\):", 3);
-            if (parts.length >= 2) {
-                String rawMac = parts[0].replace("\\", "").strip();
-                String rawSignal = parts[1].strip();
-                try {
-                    double signalPercent = Double.parseDouble(rawSignal);
-                    if (signalPercent > 0 && signalPercent <= 100) {
-                        double rssiDbm = (signalPercent / 2.0) - 100.0;
-                        result.add(new StationSample("p2p-wlp0s20f3-0", rawMac, rssiDbm, sampledAt));
-                    }
-                } catch (IllegalArgumentException ignored) { }
             }
         }
         return List.copyOf(result);

@@ -29,4 +29,33 @@ class MetricsMessageHandlerDirectLinkTest {
         assertEquals(DirectLinkStatus.UNAVAILABLE, identity.status());
         assertFalse(identity.supports("WIFI_DIRECT_IDENTITY_V1"));
     }
+
+    @Test void routerWifiRssiCannotCreateClientServerPhysicalDistance() {
+        var tracker = new RealtimeDistanceTracker();
+        MetricsRepository repo = new MetricsRepository() {
+            @Override public void upsert(String d, vn.edu.ltm.common.model.SystemMetrics m) {}
+            @Override public java.util.Optional<vn.edu.ltm.common.model.SystemMetrics> findLatest(String d) { return java.util.Optional.empty(); }
+        };
+        var handler = new MetricsMessageHandler(repo, null, null, null, tracker, null);
+
+        var payload = JsonNodeFactory.instance.objectNode()
+                .put("collectedAt", "2026-10-24T00:00:00Z")
+                .put("cpuPercent", 12.0)
+                .put("ramPercent", 45.0)
+                .put("diskPercent", 70.0)
+                .put("charging", true)
+                .putNull("temperatureCelsius")
+                .putNull("batteryPercent")
+                .put("wifiRssiDbm", -57.0);
+
+        var envelope = new vn.edu.ltm.common.protocol.ControlEnvelope(
+                vn.edu.ltm.common.protocol.MessageType.METRICS, "req-1", "pc-b", payload);
+
+        handler.accept("pc-b", envelope);
+
+        var telemetry = tracker.getOrProbe("pc-b", null, true);
+        assertFalse(telemetry.hasPhysicalDistance());
+        assertFalse(telemetry.hasSignal());
+        assertNotEquals(DirectLinkStatus.CONNECTED, telemetry.directLinkStatus());
+    }
 }

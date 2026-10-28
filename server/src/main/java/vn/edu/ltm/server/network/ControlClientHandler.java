@@ -68,6 +68,8 @@ public final class ControlClientHandler implements Runnable {
                         || message.type() == MessageType.RANGING_CAPABILITIES
                         || message.type() == MessageType.RANGING_RESULT
                         || message.type() == MessageType.RANGING_ABORT
+                        || message.type() == MessageType.FILE_LIST_REQUEST
+                        || message.type() == MessageType.PULL_DATA_REQUEST
                         || message.type() == MessageType.ERROR) {
                     inbound.accept(session.deviceId(), message);
                 } else {

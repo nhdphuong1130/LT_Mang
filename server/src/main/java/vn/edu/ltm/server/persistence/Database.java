@@ -54,7 +54,25 @@ public final class Database {
         migrateLegacyRestoreJobs(schema);
         ensureRestoreColumns();
         ensureDeviceColumns();
+        ensureAdminUsers();
         normalizeRestoreTimestamps();
+    }
+
+    private void ensureAdminUsers() throws SQLException {
+        String inaccessibleHash = "!disabled!" + java.util.UUID.randomUUID();
+        try (var connection = openConnection(); var statement = connection.prepareStatement("""
+                INSERT OR IGNORE INTO admin_users(username, password_hash, created_at)
+                VALUES ('system', ?, ?)
+                """)) {
+            statement.setString(1, inaccessibleHash);
+            statement.setString(2, java.time.Instant.now().toString());
+            statement.executeUpdate();
+        }
+        try (var connection = openConnection(); var statement = connection.prepareStatement(
+                "UPDATE admin_users SET password_hash = ? WHERE username = 'system'")) {
+            statement.setString(1, inaccessibleHash);
+            statement.executeUpdate();
+        }
     }
 
     private void ensureDeviceColumns() throws SQLException {

@@ -4,6 +4,15 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class OshiMetricsCollectorSmokeTest {
+    @Test void unavailableTemperatureIsNotFabricatedFromCpuUsage() {
+        assertNull(OshiMetricsCollector.resolveTemperature(0.0, 73.0));
+        assertNull(OshiMetricsCollector.resolveTemperature(Double.NaN, 73.0));
+    }
+
+    @Test void realSensorTemperatureIsPreserved() {
+        assertEquals(61.5, OshiMetricsCollector.resolveTemperature(61.5, 73.0));
+    }
+
     @Test void collectsRealMetricsWithoutAssumingAvailableSensors() {
         var collector = new OshiMetricsCollector();
         for (int i = 0; i < 2; i++) {

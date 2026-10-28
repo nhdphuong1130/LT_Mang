@@ -32,6 +32,15 @@ class KalmanDistanceEstimatorTest {
         assertEquals(0, sample.signalQualityPercent());
     }
 
+    @Test void badgeNeverDisplaysUnverifiedMeters() {
+        var forged = new DistanceTelemetry(-50, -50, 100, 1.25, 4, 0, 128, 1,
+                "Rất gần", "UNVERIFIED", "NONE", DirectLinkStatus.WRONG_SIGNAL_SOURCE,
+                "wlan0", "", java.time.Instant.now(), "", false);
+
+        assertFalse(forged.hasPhysicalDistance());
+        assertFalse(forged.badgeText().contains("1.25 m"));
+    }
+
     @Test
     void defaultIndoorCalibrationClassifiesStrongWifiAsUnderTwoMeters() {
         var estimator = new KalmanDistanceEstimator();

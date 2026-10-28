@@ -10,6 +10,13 @@ import java.sql.SQLException;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AdminAuthServiceTest {
+    @Test void reservedServiceAccountCannotBeCreatedOrAuthenticated() throws Exception {
+        var auth = new AdminAuthService(new JdbcAdminUserRepository(database()));
+        assertThrows(IllegalArgumentException.class,
+                () -> auth.createInitialAdmin("system", "a long private password".toCharArray()));
+        assertFalse(auth.authenticate("system", "anything at all".toCharArray()).authenticated());
+    }
+
     @TempDir Path root;
 
     @Test void initialAdminIsExplicitAndPasswordIsHashed() throws Exception {
@@ -21,12 +28,15 @@ class AdminAuthServiceTest {
         assertTrue(auth.authenticate("admin", "a long private password".toCharArray()).authenticated());
         assertFalse(auth.authenticate("admin", "incorrect".toCharArray()).authenticated());
         assertThrows(IllegalStateException.class, () -> auth.createInitialAdmin("other", "other password".toCharArray()));
-        try (var connection = db.openConnection(); var query = connection.createStatement();
-             var rows = query.executeQuery("SELECT password_hash FROM admin_users")) {
+        try (var connection = db.openConnection(); var query = connection.prepareStatement(
+                "SELECT password_hash FROM admin_users WHERE username = ?")) {
+            query.setString(1, "admin");
+            try (var rows = query.executeQuery()) {
             assertTrue(rows.next());
             String hash = rows.getString(1);
             assertTrue(hash.startsWith("$2a$12$") || hash.startsWith("$2b$12$"));
             assertFalse(hash.contains("a long private password"));
+            }
         }
     }
 

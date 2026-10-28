@@ -6,11 +6,12 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Administrator authentication for the caller-facing command path. Password inputs are consumed and cleared. */
 public final class AdminAuthService {
     private final AdminUserRepository users;
-    private final ThreadLocal<String> currentAdmin = new ThreadLocal<>();
+    private final AtomicReference<String> currentAdmin = new AtomicReference<>();
 
     public AdminAuthService(AdminUserRepository users) { this.users = Objects.requireNonNull(users); }
 
@@ -27,7 +28,7 @@ public final class AdminAuthService {
 
     public AuthResult authenticate(String username, char[] password) throws SQLException {
         Objects.requireNonNull(password);
-        currentAdmin.remove();
+        currentAdmin.set(null);
         try {
             if (!isValidUsername(username)) return new AuthResult(false, null);
             var hash = users.passwordHash(username);
@@ -38,17 +39,19 @@ public final class AdminAuthService {
     }
 
     public void requireAuthenticated(String username) {
-        if (username == null || !username.equals(currentAdmin.get())) throw new SecurityException("Administrator login required");
+        String active = currentAdmin.get();
+        if (username == null || !username.equals(active)) throw new SecurityException("Administrator login required");
     }
 
-    public void logout() { currentAdmin.remove(); }
+    public void logout() { currentAdmin.set(null); }
 
     private static void validUsername(String username) {
         if (!isValidUsername(username)) throw new IllegalArgumentException("Invalid administrator username");
     }
 
     private static boolean isValidUsername(String username) {
-        return username != null && username.matches("[A-Za-z0-9._-]{1,64}");
+        return username != null && !"system".equalsIgnoreCase(username)
+                && username.matches("[A-Za-z0-9._-]{1,64}");
     }
 
     public record AuthResult(boolean authenticated, String username) { }

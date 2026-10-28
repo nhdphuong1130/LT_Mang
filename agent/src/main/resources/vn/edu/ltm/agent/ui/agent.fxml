@@ -2,20 +2,59 @@
 <?import javafx.scene.layout.*?>
 <?import javafx.scene.control.*?>
 <VBox xmlns:fx="http://javafx.com/fxml" fx:controller="vn.edu.ltm.agent.ui.AgentController" spacing="12" styleClass="root-panel">
-  <Label text="Agent monitoring and backup" styleClass="title"/>
-  <GridPane hgap="10" vgap="8">
-    <Label text="Server host" GridPane.rowIndex="0"/><TextField fx:id="hostField" text="127.0.0.1" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
-    <Label text="Control port" GridPane.rowIndex="1"/><TextField fx:id="controlPortField" text="5050" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
-    <Label text="File port" GridPane.rowIndex="2"/><TextField fx:id="filePortField" text="5051" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
-    <Label text="Device ID" GridPane.rowIndex="3"/><TextField fx:id="deviceIdField" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
-    <Label text="Device token" GridPane.rowIndex="4"/><PasswordField fx:id="tokenField" GridPane.columnIndex="1" GridPane.rowIndex="4"/>
-    <Label text="Protected folder" GridPane.rowIndex="5"/><TextField fx:id="rootField" GridPane.columnIndex="1" GridPane.rowIndex="5"/>
-    <Button text="Browse" onAction="#chooseFolder" GridPane.columnIndex="2" GridPane.rowIndex="5"/>
-  </GridPane>
-  <Button text="Start agent" onAction="#startAgent"/>
-  <Separator/>
-  <Label fx:id="statusLabel" text="Offline" styleClass="status"/>
-  <Label fx:id="metricsLabel" text="CPU N/A  RAM N/A  Disk N/A  Temp N/A  Battery N/A"/>
-  <Label fx:id="queueLabel" text="Pending backups: 0"/>
-  <Label fx:id="messageLabel" wrapText="true"/>
+  <Label text="LAN Backup Agent — NetOp School Classroom Client" styleClass="title"/>
+  <TabPane fx:id="mainTabPane" tabClosingPolicy="UNAVAILABLE" VBox.vgrow="ALWAYS">
+    <Tab text="1. Cấu hình &amp; Giám sát (Connection &amp; Status)">
+      <VBox spacing="12" style="-fx-padding: 12;">
+        <GridPane hgap="10" vgap="8">
+          <Label text="Server host" GridPane.rowIndex="0"/><TextField fx:id="hostField" text="127.0.0.1" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
+          <Label text="Control port" GridPane.rowIndex="1"/><TextField fx:id="controlPortField" text="5050" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
+          <Label text="File port" GridPane.rowIndex="2"/><TextField fx:id="filePortField" text="5051" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
+          <Label text="Device ID" GridPane.rowIndex="3"/><TextField fx:id="deviceIdField" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
+          <Label text="Device token" GridPane.rowIndex="4"/><PasswordField fx:id="tokenField" GridPane.columnIndex="1" GridPane.rowIndex="4"/>
+          <Label text="Protected folder" GridPane.rowIndex="5"/><TextField fx:id="rootField" GridPane.columnIndex="1" GridPane.rowIndex="5"/>
+          <Button text="Browse" onAction="#chooseFolder" GridPane.columnIndex="2" GridPane.rowIndex="5"/>
+        </GridPane>
+        <HBox spacing="10" alignment="CENTER_LEFT">
+          <Button text="Bắt đầu giám sát &amp; Kết nối" onAction="#startAgent" style="-fx-base: #2563eb; -fx-text-fill: white;"/>
+          <Button text="Mở thư mục Bảo vệ" onAction="#openProtectedFolder"/>
+          <Button text="Mở thư mục Recovered" onAction="#openRecoveredFolder"/>
+        </HBox>
+        <Separator/>
+        <Label fx:id="statusLabel" text="Offline" styleClass="status"/>
+        <Label fx:id="metricsLabel" text="CPU N/A  RAM N/A  Disk N/A  Temp N/A  Battery N/A"/>
+        <Label fx:id="queueLabel" text="Pending backups: 0"/>
+        <Label fx:id="messageLabel" wrapText="true"/>
+      </VBox>
+    </Tab>
+    <Tab text="2. Kéo Thư Mục &amp; Dữ Liệu từ Server (Pull Data &amp; Download)">
+      <VBox spacing="10" style="-fx-padding: 12;">
+        <HBox spacing="10" alignment="CENTER_LEFT">
+          <Button text="🔄 Làm mới danh sách file trên Server" onAction="#refreshServerFiles"/>
+          <Button text="⬇ Kéo File đã chọn về máy" onAction="#pullSelectedFile" style="-fx-base: #16a34a; -fx-text-fill: white;"/>
+          <Button text="📁 Kéo toàn bộ Thư mục / Dữ liệu về máy" onAction="#pullAllFiles" style="-fx-base: #0284c7; -fx-text-fill: white;"/>
+          <Button text="📂 Mở thư mục Recovered" onAction="#openRecoveredFolder"/>
+        </HBox>
+        <TableView fx:id="serverFilesTable" VBox.vgrow="ALWAYS">
+          <columns>
+            <TableColumn fx:id="colRelativePath" text="Đường dẫn file (Relative Path)" prefWidth="380"/>
+            <TableColumn fx:id="colSize" text="Dung lượng" prefWidth="120"/>
+            <TableColumn fx:id="colCreatedAt" text="Thời gian sao lưu" prefWidth="200"/>
+            <TableColumn fx:id="colSha256" text="Mã SHA-256" prefWidth="180"/>
+          </columns>
+        </TableView>
+        <Label fx:id="pullStatusLabel" text="Chưa tải danh sách. Bấm 'Làm mới danh sách file trên Server' để xem dữ liệu." wrapText="true"/>
+      </VBox>
+    </Tab>
+    <Tab text="3. Nhật ký Sự kiện &amp; Thông báo (Event &amp; Notification Log)">
+      <VBox spacing="10" style="-fx-padding: 12;">
+        <HBox spacing="10" alignment="CENTER_LEFT">
+          <Label text="Lịch sử thông báo, cảnh báo mất kết nối &amp; truyền file (Thời gian thực):" style="-fx-font-weight: bold;"/>
+          <Pane HBox.hgrow="ALWAYS"/>
+          <Button text="Xóa nhật ký (Clear)" onAction="#clearEventLogs"/>
+        </HBox>
+        <ListView fx:id="eventListView" VBox.vgrow="ALWAYS"/>
+      </VBox>
+    </Tab>
+  </TabPane>
 </VBox>

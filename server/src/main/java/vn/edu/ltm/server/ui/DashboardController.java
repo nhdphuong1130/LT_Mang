@@ -62,6 +62,7 @@ public final class DashboardController {
     private boolean rebuildingTree;
     private List<DashboardDataService.DeviceBackupFolder> lastTreeFolders;
     private int lastTreeVersionCount = -1;
+    private String latestBroadcastMessage;
 
     public void configure(DashboardViewModel model, DashboardDataService data,
                           DeviceProvisioningService provisioning, RestoreService restores,
@@ -191,6 +192,13 @@ public final class DashboardController {
                 incidentsList.getSelectionModel().select(selectedIncident);
             }
         }
+        if (!snapshot.incidents().isEmpty()) {
+            String newest = snapshot.incidents().getFirst();
+            if (!newest.equals(latestBroadcastMessage)) {
+                latestBroadcastMessage = newest;
+                messageLabel.setText("🔔 Sự kiện mới: " + newest);
+            }
+        }
         if (targetDeviceCombo != null) {
             String currentTarget = targetDeviceCombo.getValue();
             var deviceIds = snapshot.deviceFolders().stream().map(DashboardDataService.DeviceBackupFolder::deviceId).toList();
@@ -265,14 +273,19 @@ public final class DashboardController {
             configureCardLine(nameLabel, "client-device-id");
             Label displayLabel = new Label(item.displayName() + " (" + item.platform() + ")");
             configureCardLine(displayLabel, "client-detail-line");
-            Label metricsMini = new Label(String.format(Locale.ROOT, "CPU %.0f%% | RAM %.0f%% | Disk %.0f%%",
-                    item.cpuPercent(), item.ramPercent(), item.diskPercent()));
+            Label metricsMini = new Label(item.online()
+                    ? String.format(Locale.ROOT, "CPU %.0f%% | RAM %.0f%% | Disk %.0f%%",
+                            item.cpuPercent(), item.ramPercent(), item.diskPercent())
+                    : (item.isolated() ? "CÔ LẬP | Ngắt kết nối" : "OFFLINE | Mất kết nối"));
             configureCardLine(metricsMini, "client-detail-line");
+            String tempStr = item.temperatureCelsius() != null
+                    ? String.format(Locale.ROOT, "%.0f°C", item.temperatureCelsius())
+                    : "N/A";
             Label healthMini = new Label(String.format(Locale.ROOT, "Nhiệt độ: %s | Backup: %s | Nhận file: %s",
-                    item.temperatureCelsius() == null ? "N/A" : String.format(Locale.ROOT, "%.0f°C", item.temperatureCelsius()),
-                    item.allowBackup() ? "Có" : "Chặn", item.allowRestore() ? "Có" : "Chặn"));
+                    tempStr,
+                    item.allowBackup() ? "Cho phép" : "Chặn", item.allowRestore() ? "Cho phép" : "Chặn"));
             configureCardLine(healthMini, "client-detail-line");
-            Label distMini = new Label(item.distance() != null ? item.distance().badgeText() : "📍 Khoảng cách: N/A");
+            Label distMini = new Label(item.distance() != null ? item.distance().badgeText() : "Khoảng cách: OFFLINE");
             configureCardLine(distMini, "client-detail-line");
             distMini.getStyleClass().add(item.online() ? "client-distance-online" : "client-distance-offline");
             Label detailHint = new Label("Chọn để xem đầy đủ bên phải • Nhấp đúp mở dxdiag");
@@ -322,8 +335,11 @@ public final class DashboardController {
         if (dxdiagTitleLabel != null) {
             dxdiagTitleLabel.setText("Thông tin dxdiag: " + item.deviceId() + " (" + item.displayName() + ")");
         }
-        if (allowBackupCheck != null) allowBackupCheck.setSelected(item.allowBackup());
-        if (allowRestoreCheck != null) allowRestoreCheck.setSelected(item.allowRestore());
+        boolean deviceChanged = !item.deviceId().equals(inspectorDeviceId);
+        if (deviceChanged) {
+            if (allowBackupCheck != null) allowBackupCheck.setSelected(item.allowBackup());
+            if (allowRestoreCheck != null) allowRestoreCheck.setSelected(item.allowRestore());
+        }
         if (dxdiagSummaryArea != null) {
             boolean preserveViewport = item.deviceId().equals(inspectorDeviceId);
             double scrollTop = dxdiagSummaryArea.getScrollTop();
@@ -355,7 +371,7 @@ public final class DashboardController {
         String distMetersText = dist.hasPhysicalDistance()
                 ? String.format(Locale.ROOT, "~%.2f mét — %s", dist.estimatedMeters(), dist.zoneLabel())
                 : dist.isOnline() ? dist.method() : "OFFLINE (Mất kết nối)";
-        String distSignalText = dist.hasPhysicalDistance()
+        String distSignalText = (dist.hasPhysicalDistance() || dist.hasSignal())
                 ? String.format(Locale.ROOT, "%.1f dBm (Raw: %.1f dBm) | Chất lượng sóng: %d%%",
                         dist.rssiFilteredDbm(), dist.rssiRawDbm(), dist.signalQualityPercent())
                 : "N/A";
@@ -412,7 +428,7 @@ public final class DashboardController {
         String physical = dist.hasPhysicalDistance()
                 ? String.format(Locale.ROOT, "~%.2f m (%s)", dist.estimatedMeters(), dist.zoneLabel())
                 : "Chưa có khoảng cách vật lý — " + dist.method();
-        String signal = dist.hasPhysicalDistance()
+        String signal = (dist.hasPhysicalDistance() || dist.hasSignal())
                 ? String.format(Locale.ROOT, "Raw %.1f dBm | Kalman %.1f dBm | %d%%",
                         dist.rssiRawDbm(), dist.rssiFilteredDbm(), dist.signalQualityPercent())
                 : "N/A";
@@ -722,7 +738,7 @@ public final class DashboardController {
         worker.submit(() -> {
             try {
                 auth.requireAuthenticated(model.adminUsername());
-                provisioning.setPermissions(item.deviceId(), allowBkp, allowRst);
+                provisioning.setPermissions(item.deviceId(), allowBkp, allowRst, model.adminUsername());
                 Platform.runLater(() -> {
                     messageLabel.setText("Đã cập nhật phân quyền cho [" + item.deviceId()
                             + "]: Cho phép Backup=" + allowBkp + ", Cho phép Nhận file=" + allowRst);
@@ -890,7 +906,7 @@ public final class DashboardController {
         worker.submit(() -> {
             try {
                 auth.requireAuthenticated(model.adminUsername());
-                boolean isolated = provisioning.toggleIsolated(targetDev, sessions);
+                boolean isolated = provisioning.toggleIsolated(targetDev, sessions, model.adminUsername());
                 Platform.runLater(() -> {
                     messageLabel.setText(isolated
                             ? "Đã CÔ LẬP thiết bị [" + targetDev + "] — đã ngắt kết nối và chặn truy cập"

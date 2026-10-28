@@ -23,20 +23,28 @@ public final class FileUploadHandler implements Runnable {
     private final BackupService backups;
     private final TempOutputFactory outputFactory;
     private final FileTransferHeader initialHeader;
+    private final vn.edu.ltm.server.audit.AuditLogRepository auditLogs;
     private final FileTransferCodec codec = new FileTransferCodec();
 
     public FileUploadHandler(Socket socket, DeviceProvisioningService provisioning, BackupService backups,
                              TempOutputFactory outputFactory) {
-        this(socket, provisioning, backups, outputFactory, null);
+        this(socket, provisioning, backups, outputFactory, null, null);
     }
 
     public FileUploadHandler(Socket socket, DeviceProvisioningService provisioning, BackupService backups,
                              TempOutputFactory outputFactory, FileTransferHeader initialHeader) {
+        this(socket, provisioning, backups, outputFactory, initialHeader, null);
+    }
+
+    public FileUploadHandler(Socket socket, DeviceProvisioningService provisioning, BackupService backups,
+                             TempOutputFactory outputFactory, FileTransferHeader initialHeader,
+                             vn.edu.ltm.server.audit.AuditLogRepository auditLogs) {
         this.socket = socket;
         this.provisioning = provisioning;
         this.backups = backups;
         this.outputFactory = outputFactory;
         this.initialHeader = initialHeader;
+        this.auditLogs = auditLogs;
     }
 
     @Override public void run() {
@@ -73,6 +81,10 @@ public final class FileUploadHandler implements Runnable {
                 }
                 try (var channel = FileChannel.open(temp, StandardOpenOption.WRITE)) { channel.force(true); }
                 TransferResult result = backups.complete(reservation, temp, HexFormat.of().formatHex(digest.digest()));
+                if (auditLogs != null && (result.status() == TransferResult.Status.STORED || result.status() == TransferResult.Status.UNCHANGED)) {
+                    auditLogs.log(java.time.Instant.now(), header.deviceId(), "BACKUP_UPLOAD", header.deviceId(),
+                            "Upload sao lưu file: [" + header.relativePath() + "] (" + header.fileSize() + " B, " + result.status() + ")");
+                }
                 codec.writeResult(socket.getOutputStream(), result);
             } catch (Exception failure) {
                 if (reservation != null) try { backups.abort(reservation); } catch (IOException ignored) { }

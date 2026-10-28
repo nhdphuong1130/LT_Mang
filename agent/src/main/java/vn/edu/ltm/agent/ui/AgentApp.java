@@ -20,6 +20,7 @@ import vn.edu.ltm.agent.persistence.AgentDatabase;
 import vn.edu.ltm.agent.ranging.AgentRangingService;
 import vn.edu.ltm.agent.restore.RestoreHandler;
 import vn.edu.ltm.agent.risk.*;
+import vn.edu.ltm.common.protocol.ControlEnvelope;
 import vn.edu.ltm.common.protocol.MessageType;
 import vn.edu.ltm.common.lifecycle.AsyncCloseWorkflow;
 import vn.edu.ltm.common.ranging.AcousticRangingConfigLoader;
@@ -45,10 +46,23 @@ public final class AgentApp extends Application {
         Platform.setImplicitExit(false);
         this.stage = stage;
         var loader = new FXMLLoader(AgentApp.class.getResource("agent.fxml"));
-        var scene = new Scene(loader.load(), 880, 520);
+        var scene = new Scene(loader.load(), 980, 640);
         scene.getStylesheets().add(AgentApp.class.getResource("agent.css").toExternalForm());
         controller = loader.getController();
+        controller.bindModel(model);
         controller.setOnStart(this::startRuntime);
+        controller.setOnRequestServerFiles(() -> {
+            var rt = runtimes.active();
+            if (rt != null) rt.requestServerFiles();
+        });
+        controller.setOnPullFile(path -> {
+            var rt = runtimes.active();
+            if (rt != null) rt.pullFile(path);
+        });
+        controller.setOnPullAll(() -> {
+            var rt = runtimes.active();
+            if (rt != null) rt.pullAll();
+        });
         try {
             settingsStore.load().ifPresent(saved -> {
                 controller.load(saved);
@@ -140,11 +154,32 @@ public final class AgentApp extends Application {
             ranging = new AgentRangingService(settings.deviceId(), control::send, audioEndpoint, rangingConfig);
             control.setInboundHandler(message -> {
                 if (message.type() == MessageType.RESTORE_AVAILABLE) fileTasks.submit(() -> {
-                    try { restore.restore(message); }
+                    try {
+                        Path restored = restore.restore(message);
+                        String rel = message.payload() != null ? message.payload().path("relativePath").asText() : "";
+                        model.logEvent("ĐÃ KÉO FILE VỀ MÁY THÀNH CÔNG: [" + rel + "] -> " + restored);
+                    }
                     catch (IOException | RuntimeException failure) {
                         model.warn("Restore failed: " + failure.getMessage());
+                        model.logEvent("LỖI KHI KÉO FILE VỀ MÁY: " + failure.getMessage());
                     }
                 });
+                else if (message.type() == MessageType.FILE_LIST_RESPONSE) {
+                    var filesNode = message.payload() != null ? message.payload().path("files") : null;
+                    var list = new java.util.ArrayList<AgentViewModel.ServerFileRecord>();
+                    if (filesNode != null && filesNode.isArray()) {
+                        for (var item : filesNode) {
+                            list.add(new AgentViewModel.ServerFileRecord(
+                                    item.path("relativePath").asText(),
+                                    item.path("size").asLong(0),
+                                    item.path("createdAt").asText(),
+                                    item.path("sha256").asText()
+                            ));
+                        }
+                    }
+                    model.updateServerFiles(list);
+                    model.logEvent("Đã cập nhật danh sách file từ Server: " + list.size() + " files.");
+                }
                 else if (message.type() == MessageType.RANGING_START || message.type() == MessageType.RANGING_ABORT) {
                     if (ranging != null) {
                         ranging.handleMessage(message);
@@ -166,7 +201,8 @@ public final class AgentApp extends Application {
                 }
             });
             var worker = new BackupWorker(queue,
-                    new BackupUploader(root, settings.serverHost(), settings.filePort(), settings.deviceId(), settings.token()), root);
+                    new BackupUploader(root, settings.serverHost(), settings.filePort(), settings.deviceId(), settings.token()), root,
+                    candidate -> model.logEvent("ĐÃ SAO LƯU THÀNH CÔNG: [" + candidate.relativePath() + "] (" + candidate.size() + " B) lên Server"));
             scheduler.scheduleWithFixedDelay(() -> {
                 if (stopping) return;
                 try { worker.runOnce(); }
@@ -174,15 +210,22 @@ public final class AgentApp extends Application {
             }, 3, 3, TimeUnit.SECONDS);
             var disconnected = new ConnectionStatusNotifier(() -> {
                 model.warn("Server mất liên lạc");
+                model.logEvent("CẢNH BÁO: Mất kết nối đến Server (" + settings.serverHost() + ":" + settings.controlPort() + ")!");
                 Platform.runLater(() -> {
-                    var alert = new Alert(Alert.AlertType.WARNING, "Server mất liên lạc");
-                    alert.setHeaderText("Agent disconnected"); alert.show();
+                    var alert = new Alert(Alert.AlertType.WARNING, "Mất kết nối với máy chủ LAN Backup Server (" + settings.serverHost() + ")");
+                    alert.setHeaderText("Cảnh báo mất kết nối (Agent Disconnected)"); alert.show();
                 });
             });
+            final boolean[] wasOnline = new boolean[] { false };
             scheduler.scheduleAtFixedRate(() -> {
                 boolean online = control.isRegistered();
                 disconnected.poll(online);
                 model.setConnected(online);
+                if (!wasOnline[0] && online) {
+                    model.logEvent("Đã kết nối thành công tới Server (" + settings.serverHost() + ":" + settings.controlPort() + ")");
+                    requestServerFiles();
+                }
+                wasOnline[0] = online;
                 if (online && !capabilitiesPublished.getAndSet(true)) {
                     ranging.publishCapabilities();
                 } else if (!online) {
@@ -210,6 +253,55 @@ public final class AgentApp extends Application {
                         stable.modifiedTime().toInstant(), stable.sha256()));
             } catch (IOException | InterruptedException | SQLException failure) {
                 if (!stopping) model.warn("Could not queue changed file: " + failure.getMessage());
+            }
+        }
+
+        void requestServerFiles() {
+            if (control != null && control.isRegistered()) {
+                var envelope = new ControlEnvelope(MessageType.FILE_LIST_REQUEST, java.util.UUID.randomUUID().toString(),
+                        settings.deviceId(), com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode());
+                try {
+                    control.send(envelope);
+                } catch (IOException failure) {
+                    model.warn("Không thể gửi yêu cầu danh sách file: " + failure.getMessage());
+                }
+            } else {
+                model.warn("Chưa kết nối tới máy chủ");
+            }
+        }
+
+        void pullFile(String relativePath) {
+            if (control != null && control.isRegistered()) {
+                var payload = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+                        .put("target", "file")
+                        .put("relativePath", relativePath);
+                var envelope = new ControlEnvelope(MessageType.PULL_DATA_REQUEST, java.util.UUID.randomUUID().toString(),
+                        settings.deviceId(), payload);
+                try {
+                    control.send(envelope);
+                    model.logEvent("Đang yêu cầu Server gửi file [" + relativePath + "] về máy...");
+                } catch (IOException failure) {
+                    model.warn("Không thể gửi yêu cầu kéo file: " + failure.getMessage());
+                }
+            } else {
+                model.warn("Chưa kết nối tới máy chủ");
+            }
+        }
+
+        void pullAll() {
+            if (control != null && control.isRegistered()) {
+                var payload = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+                        .put("target", "all");
+                var envelope = new ControlEnvelope(MessageType.PULL_DATA_REQUEST, java.util.UUID.randomUUID().toString(),
+                        settings.deviceId(), payload);
+                try {
+                    control.send(envelope);
+                    model.logEvent("Đang yêu cầu Server gửi toàn bộ thư mục dữ liệu về máy...");
+                } catch (IOException failure) {
+                    model.warn("Không thể gửi yêu cầu kéo dữ liệu: " + failure.getMessage());
+                }
+            } else {
+                model.warn("Chưa kết nối tới máy chủ");
             }
         }
 

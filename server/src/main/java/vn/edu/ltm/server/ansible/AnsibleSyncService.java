@@ -77,17 +77,32 @@ public final class AnsibleSyncService {
         Path inventory = playbookDir.resolve("inventory.ini");
         Path playbook = playbookDir.resolve("init_sync_file.yml");
         if (!Files.isRegularFile(inventory) || !Files.isRegularFile(playbook)) return false;
+        String ansibleCmd = resolveAnsibleExecutable();
         try {
             Process process = new ProcessBuilder(
-                    "ansible-playbook", "-i", inventory.toString(), playbook.toString(),
+                    ansibleCmd, "-i", inventory.toString(), playbook.toString(),
                     "-e", "sync_dir=" + syncDir.toAbsolutePath(),
                     "-e", "custom_message=" + message.replace("\"", "'")
             ).redirectErrorStream(true).start();
-            boolean finished = process.waitFor(10, TimeUnit.SECONDS);
+            boolean finished = process.waitFor(30, TimeUnit.SECONDS);
             return finished && process.exitValue() == 0;
         } catch (IOException | InterruptedException unavailable) {
             if (unavailable instanceof InterruptedException) Thread.currentThread().interrupt();
             return false;
         }
+    }
+
+    private static String resolveAnsibleExecutable() {
+        String userHome = System.getProperty("user.home", "");
+        Path[] candidates = new Path[] {
+                Path.of(userHome, ".local", "bin", "ansible-playbook"),
+                Path.of("/usr/bin/ansible-playbook"),
+                Path.of("/usr/local/bin/ansible-playbook"),
+                Path.of("/bin/ansible-playbook")
+        };
+        for (Path candidate : candidates) {
+            if (Files.isExecutable(candidate)) return candidate.toAbsolutePath().toString();
+        }
+        return "ansible-playbook";
     }
 }

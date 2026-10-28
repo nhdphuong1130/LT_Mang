@@ -115,13 +115,12 @@ public final class RealtimeDistanceTracker {
         DeviceTrack track = tracks.computeIfAbsent(deviceId, id -> new DeviceTrack());
         var resolution = directLinks.resolve(deviceId, List.copyOf(stationSamplesByMac.values()));
         DistanceTelemetry updated;
+        DistanceCalibrationModel model = calibrationSupplier.get();
         if (resolution.status() == DirectLinkStatus.CONNECTED && resolution.sample() != null) {
             var sample = resolution.sample();
-            DistanceCalibrationModel model = calibrationSupplier.get();
             updated = verified(track.estimatorFor(model).updateFromRssiAndRtt(sample.rssiDbm(), rttMs, ttl),
                     sample, model);
         } else {
-            DistanceCalibrationModel model = calibrationSupplier.get();
             updated = unavailable(track.estimatorFor(model).updateFromRttOnly(rttMs, ttl), resolution);
         }
         track.latestTelemetry = updated;
@@ -142,7 +141,7 @@ public final class RealtimeDistanceTracker {
                 Thread.ofVirtual().name("distance-probe-" + deviceId).start(() -> {
                     try {
                         PingResult res = probeHost(ipAddress);
-                        recordProbe(deviceId, res.rttMs(), res.ttl());
+                        if (res != null) recordProbe(deviceId, res.rttMs(), res.ttl());
                     } finally {
                         track.probing.set(false);
                     }
@@ -153,6 +152,13 @@ public final class RealtimeDistanceTracker {
             var resolution = directLinks.resolve(deviceId, List.copyOf(stationSamplesByMac.values()));
             DistanceTelemetry base = DistanceTelemetry.waitingFor(resolution.status(), resolution.reason());
             return fusion.fuse(deviceId, latestAcousticSamples.get(deviceId), base, System.currentTimeMillis());
+        }
+        if (track.latestTelemetry.hasPhysicalDistance()
+                && DistanceTelemetry.VERIFIED_DIRECT_SOURCE.equals(track.latestTelemetry.measurementSource())) {
+            var resolution = directLinks.resolve(deviceId, List.copyOf(stationSamplesByMac.values()));
+            if (resolution.status() != DirectLinkStatus.CONNECTED || resolution.sample() == null) {
+                track.latestTelemetry = unavailable(track.latestTelemetry, resolution);
+            }
         }
         return fusion.fuse(deviceId, latestAcousticSamples.get(deviceId), track.latestTelemetry, System.currentTimeMillis());
     }
@@ -187,7 +193,6 @@ public final class RealtimeDistanceTracker {
 
     static PingResult probeHost(String ip) {
         boolean isWindows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
-        long startNanos = System.nanoTime();
         try {
             ProcessBuilder pb = isWindows
                     ? new ProcessBuilder("ping", "-n", "1", "-w", "900", ip)
@@ -198,8 +203,7 @@ public final class RealtimeDistanceTracker {
             PingResult parsed = parsePingOutput(out);
             if (parsed != null) return parsed;
         } catch (Exception ignored) { }
-        double elapsedMs = Math.max(1.5, Math.min(45.0, (System.nanoTime() - startNanos) / 1_000_000.0));
-        return new PingResult(elapsedMs, 128);
+        return null;
     }
 
     static PingResult parsePingOutput(String output) {

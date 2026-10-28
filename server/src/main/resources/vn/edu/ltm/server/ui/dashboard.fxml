@@ -48,7 +48,7 @@
         <Button text="Provision device" onAction="#provision"/>
       </HBox>
     </VBox></Tab>
-    <Tab text="Incidents (Cảnh báo 80% &amp; File rủi ro)" closable="false"><ListView fx:id="incidentsList"/></Tab>
+    <Tab text="Sự kiện &amp; Cảnh báo (Realtime Incidents &amp; Audit Logs)" closable="false"><ListView fx:id="incidentsList"/></Tab>
     <Tab text="Backups &amp; Broadcast (Truyền file 1-Nhiều)" closable="false"><VBox spacing="8">
       <Label fx:id="selectedFolderLabel" text="Select a device folder on the left to filter backups"/>
       <SplitPane dividerPositions="0.38" VBox.vgrow="ALWAYS">

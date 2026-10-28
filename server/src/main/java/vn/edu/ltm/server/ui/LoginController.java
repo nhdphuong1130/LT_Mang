@@ -24,8 +24,6 @@ public final class LoginController {
     public void configure(AdminAuthService auth, DashboardViewModel model, ExecutorService worker, Runnable onSuccess) {
         this.auth = Objects.requireNonNull(auth); this.model = Objects.requireNonNull(model);
         this.worker = Objects.requireNonNull(worker); this.onSuccess = Objects.requireNonNull(onSuccess);
-        if (usernameField != null && usernameField.getText().isBlank()) usernameField.setText("admin");
-        if (passwordField != null && passwordField.getText().isBlank()) passwordField.setText("AdminPassword123!");
     }
     @FXML private void submitLogin() {
         String username = usernameField.getText().trim();

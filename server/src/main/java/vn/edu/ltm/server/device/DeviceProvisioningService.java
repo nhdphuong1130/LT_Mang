@@ -48,23 +48,67 @@ public final class DeviceProvisioningService {
         }
     }
 
+    private vn.edu.ltm.server.audit.AuditLogRepository auditLogs;
+    private vn.edu.ltm.server.incident.IncidentService incidents;
+
+    public void setAuditAndIncidents(vn.edu.ltm.server.audit.AuditLogRepository auditLogs,
+                                     vn.edu.ltm.server.incident.IncidentService incidents) {
+        this.auditLogs = auditLogs;
+        this.incidents = incidents;
+    }
+
     public void setIsolated(String deviceId, boolean isolated, vn.edu.ltm.server.session.SessionRegistry sessions) {
+        setIsolated(deviceId, isolated, sessions, "system");
+    }
+
+    public void setIsolated(String deviceId, boolean isolated,
+                            vn.edu.ltm.server.session.SessionRegistry sessions, String actor) {
         String normalized = normalizeDeviceId(deviceId);
         devices.setIsolated(normalized, isolated);
         if (isolated && sessions != null) sessions.disconnect(normalized);
+        java.time.Instant now = java.time.Instant.now();
+        if (auditLogs != null) {
+            auditLogs.log(now, auditActor(actor), isolated ? "DEVICE_ISOLATED" : "DEVICE_UNISOLATED",
+                    normalized, isolated ? "Đã CÔ LẬP thiết bị (Quarantine / Ngắt kết nối)" : "Đã BỎ CÔ LẬP thiết bị (Khôi phục quyền kết nối)");
+        }
+        if (incidents != null) {
+            incidents.record(normalized, new vn.edu.ltm.common.model.RiskEvent(
+                    vn.edu.ltm.common.model.RiskType.ISOLATED,
+                    isolated ? vn.edu.ltm.common.model.RiskEvent.Status.OPEN : vn.edu.ltm.common.model.RiskEvent.Status.RESOLVED,
+                    now,
+                    isolated ? "Thiết bị bị cô lập bởi Quản trị viên (NetOp School Quarantine)" : "Thiết bị đã được bỏ cô lập"));
+        }
     }
 
     public boolean toggleIsolated(String deviceId, vn.edu.ltm.server.session.SessionRegistry sessions) {
+        return toggleIsolated(deviceId, sessions, "system");
+    }
+
+    public boolean toggleIsolated(String deviceId, vn.edu.ltm.server.session.SessionRegistry sessions, String actor) {
         String normalized = normalizeDeviceId(deviceId);
         var current = devices.findById(normalized).orElseThrow(() -> new IllegalArgumentException("Device does not exist: " + normalized));
         boolean next = !current.isolated();
-        setIsolated(normalized, next, sessions);
+        setIsolated(normalized, next, sessions, actor);
         return next;
     }
 
     public void setPermissions(String deviceId, boolean allowBackup, boolean allowRestore) {
+        setPermissions(deviceId, allowBackup, allowRestore, "system");
+    }
+
+    public void setPermissions(String deviceId, boolean allowBackup, boolean allowRestore, String actor) {
         String normalized = normalizeDeviceId(deviceId);
         devices.setPermissions(normalized, allowBackup, allowRestore);
+        java.time.Instant now = java.time.Instant.now();
+        if (auditLogs != null) {
+            auditLogs.log(now, auditActor(actor), "PERMISSIONS_UPDATED", normalized,
+                    "Cập nhật phân quyền: Cho phép Backup=" + (allowBackup ? "Có" : "Chặn")
+                    + ", Cho phép Nhận file=" + (allowRestore ? "Có" : "Chặn"));
+        }
+    }
+
+    private static String auditActor(String actor) {
+        return actor == null || actor.isBlank() ? "system" : actor.trim();
     }
 
     public boolean isBackupAllowed(String deviceId) {

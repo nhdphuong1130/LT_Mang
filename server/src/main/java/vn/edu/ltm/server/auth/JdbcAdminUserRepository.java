@@ -15,7 +15,7 @@ public final class JdbcAdminUserRepository implements AdminUserRepository {
     @Override public boolean insertInitial(String username, String passwordHash, Instant createdAt) throws SQLException {
         try (var connection = database.openConnection(); var statement = connection.prepareStatement("""
                 INSERT INTO admin_users(username, password_hash, created_at)
-                SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM admin_users)
+                SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM admin_users WHERE username != 'system')
                 """)) {
             statement.setString(1, username);
             statement.setString(2, passwordHash);

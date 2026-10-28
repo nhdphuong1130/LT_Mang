@@ -33,8 +33,8 @@ public final class OshiMetricsCollector implements MetricsCollector {
         boolean charging = false;
         try {
             double value = system.getHardware().getSensors().getCpuTemperature();
-            if (Double.isFinite(value) && value != 0) temperature = value;
-        } catch (RuntimeException unavailable) { /* Optional sensor; no fabricated value. */ }
+            temperature = resolveTemperature(value, cpu);
+        } catch (RuntimeException unavailable) { /* Optional sensor; report N/A when unavailable. */ }
         try {
             var sources = system.getHardware().getPowerSources();
             // Use the lowest reported battery to avoid hiding an exhausted pack.
@@ -57,5 +57,9 @@ public final class OshiMetricsCollector implements MetricsCollector {
     }
     private static double percent(double value) {
         return Double.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
+    }
+
+    static Double resolveTemperature(double sensorValue, double ignoredCpuPercent) {
+        return Double.isFinite(sensorValue) && sensorValue > 0.0 ? sensorValue : null;
     }
 }

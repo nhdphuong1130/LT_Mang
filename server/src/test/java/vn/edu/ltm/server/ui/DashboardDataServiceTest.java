@@ -101,5 +101,31 @@ class DashboardDataServiceTest {
 
         assertEquals("N/A", sphere.dxdiag().memory());
         assertEquals("N/A", sphere.dxdiag().diskSummary());
+        assertNull(sphere.temperatureCelsius());
+        assertTrue(sphere.metricsSummary().contains("Temp N/A"));
+    }
+
+    @Test void chronologicallySortsIncidentsAndAuditLogsDescendingWithNewestFirst() throws Exception {
+        var db = new Database(temp.resolve("sort.db")); db.initialize();
+        var devices = new JdbcDeviceRepository(db);
+        var incidents = new JdbcIncidentRepository(db);
+        var auditLogs = new vn.edu.ltm.server.audit.JdbcAuditLogRepository(db);
+        devices.insert(new Device("pc-x", "May X", "Linux", "hash", Device.Status.ONLINE, java.time.Instant.now()));
+
+        java.time.Instant t1 = java.time.Instant.parse("2026-10-29T03:00:00Z");
+        java.time.Instant t2 = java.time.Instant.parse("2026-10-29T03:05:00Z");
+        java.time.Instant t3 = java.time.Instant.parse("2026-10-29T03:10:00Z");
+
+        incidents.apply("pc-x", new vn.edu.ltm.common.model.RiskEvent(
+                vn.edu.ltm.common.model.RiskType.HIGH_CPU, vn.edu.ltm.common.model.RiskEvent.Status.OPEN, t1, "CPU 95%"));
+        auditLogs.log(t2, "pc-x", "CLIENT_PULL_DATA", "pc-x", "Yêu cầu kéo file test.txt");
+        incidents.apply("pc-x", new vn.edu.ltm.common.model.RiskEvent(
+                vn.edu.ltm.common.model.RiskType.CONNECTION_LOST, vn.edu.ltm.common.model.RiskEvent.Status.OPEN, t3, "Mất kết nối"));
+
+        var snapshot = new DashboardDataService(db, devices, new JdbcMetricsRepository(db), incidents, null, null, auditLogs).load();
+        assertEquals(3, snapshot.incidents().size());
+        assertTrue(snapshot.incidents().get(0).contains("CONNECTION_LOST"), "Newest event (t3) must be first: " + snapshot.incidents().get(0));
+        assertTrue(snapshot.incidents().get(1).contains("CLIENT_PULL_DATA"), "Middle event (t2) must be second: " + snapshot.incidents().get(1));
+        assertTrue(snapshot.incidents().get(2).contains("HIGH_CPU"), "Oldest event (t1) must be third: " + snapshot.incidents().get(2));
     }
 }

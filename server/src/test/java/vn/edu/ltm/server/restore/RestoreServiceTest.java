@@ -32,6 +32,28 @@ class RestoreServiceTest {
     @TempDir Path root;
     private static final Instant NOW = Instant.parse("2026-10-10T00:00:00Z");
 
+    @Test void reservedNamesAndDeviceIdsCannotBypassAdminAuthentication() throws Exception {
+        Fixture fixture = fixture();
+        try (var sessions = new SessionRegistry(fixture.devices())) {
+            var service = service(fixture, sessions, NOW);
+            assertThrows(SecurityException.class,
+                    () -> service.request(fixture.versionId(), "device", "system"));
+            assertThrows(SecurityException.class,
+                    () -> service.request(fixture.versionId(), "device", "device"));
+        }
+    }
+
+    @Test void deviceSelfServiceCanRestoreOnlyItsOwnBackup() throws Exception {
+        Fixture fixture = fixture();
+        try (var sessions = new SessionRegistry(fixture.devices())) {
+            var service = service(fixture, sessions, NOW);
+            RestoreJob own = service.requestForDevice(fixture.versionId(), "device");
+            assertEquals("device", own.deviceId());
+            assertThrows(SecurityException.class,
+                    () -> service.requestForDevice(fixture.versionId(), "other-device"));
+        }
+    }
+
     @Test void requiresAuthenticatedAdminAndPersistsOfflinePendingAcrossRestart() throws Exception {
         Fixture fixture = fixture();
         try (var sessions = new SessionRegistry(fixture.devices())) {

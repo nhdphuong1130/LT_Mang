@@ -85,8 +85,10 @@ public final class MetricsMessageHandler implements BiConsumer<String, ControlEn
             }
         } catch (IllegalArgumentException | DateTimeParseException invalid) {
             // Return a stable reason, never raw payload values or exception text.
-            sessions.send(deviceId, new ControlEnvelope(MessageType.ERROR, message.requestId(), deviceId,
-                    JsonNodeFactory.instance.objectNode().put("reason", "Invalid " + message.type() + " payload")));
+            if (sessions != null) {
+                sessions.send(deviceId, new ControlEnvelope(MessageType.ERROR, message.requestId(), deviceId,
+                        JsonNodeFactory.instance.objectNode().put("reason", "Invalid " + message.type() + " payload")));
+            }
         }
     }
 

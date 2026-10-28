@@ -13,5 +13,8 @@ public enum MessageType {
     RANGING_START,
     RANGING_RESULT,
     RANGING_ABORT,
+    FILE_LIST_REQUEST,
+    FILE_LIST_RESPONSE,
+    PULL_DATA_REQUEST,
     ERROR
 }

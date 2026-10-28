@@ -21,6 +21,14 @@ public final class SessionRegistry implements AutoCloseable {
     private final Clock clock;
     private volatile boolean closed;
     private volatile Consumer<String> onRegistered = deviceId -> { };
+    private vn.edu.ltm.server.audit.AuditLogRepository auditLogs;
+    private vn.edu.ltm.server.incident.IncidentService incidents;
+
+    public void setAuditAndIncidents(vn.edu.ltm.server.audit.AuditLogRepository auditLogs,
+                                     vn.edu.ltm.server.incident.IncidentService incidents) {
+        this.auditLogs = auditLogs;
+        this.incidents = incidents;
+    }
 
     public SessionRegistry(DeviceRepository devices) { this(devices, Clock.systemUTC()); }
 
@@ -75,6 +83,15 @@ public final class SessionRegistry implements AutoCloseable {
             Instant now = clock.instant();
             devices.markOnline(id, now);
             candidate.touch(now);
+            if (auditLogs != null) {
+                auditLogs.log(now, id, "CLIENT_CONNECTED", id, "Thiết bị kết nối thành công");
+            }
+            if (incidents != null) {
+                incidents.record(id, new vn.edu.ltm.common.model.RiskEvent(
+                        vn.edu.ltm.common.model.RiskType.CONNECTION_LOST,
+                        vn.edu.ltm.common.model.RiskEvent.Status.RESOLVED,
+                        now, "Đã kết nối lại thành công (Agent reconnected)"));
+            }
             result.set(new RegistrationResult(true, candidate, null));
             return candidate;
         });
@@ -119,14 +136,14 @@ public final class SessionRegistry implements AutoCloseable {
     public void removeIfSame(String deviceId, UUID sessionId) {
         sessions.computeIfPresent(deviceId, (id, session) -> {
             if (!session.sessionId().equals(sessionId)) return session;
-            retire(id, session);
+            retire(id, session, true);
             return null;
         });
     }
 
     public void disconnect(String deviceId) {
         sessions.computeIfPresent(deviceId, (id, session) -> {
-            retire(id, session);
+            retire(id, session, false);
             return null;
         });
     }
@@ -135,21 +152,32 @@ public final class SessionRegistry implements AutoCloseable {
         for (String deviceId : sessions.keySet()) {
             sessions.computeIfPresent(deviceId, (id, session) -> {
                 if (session.lastSeen().isAfter(cutoff)) return session;
-                retire(id, session);
+                retire(id, session, true);
                 return null;
             });
         }
     }
 
-    private void retire(String deviceId, AgentSession session) {
+    private void retire(String deviceId, AgentSession session, boolean connectionLost) {
         session.close();
         devices.markOffline(deviceId);
+        if (!connectionLost) return;
+        Instant now = clock.instant();
+        if (auditLogs != null) {
+            auditLogs.log(now, deviceId, "CLIENT_DISCONNECTED", deviceId, "Mất kết nối với máy chủ (Agent offline)");
+        }
+        if (incidents != null) {
+            incidents.record(deviceId, new vn.edu.ltm.common.model.RiskEvent(
+                    vn.edu.ltm.common.model.RiskType.CONNECTION_LOST,
+                    vn.edu.ltm.common.model.RiskEvent.Status.OPEN,
+                    now, "Mất kết nối với máy chủ (Agent offline / disconnected)"));
+        }
     }
 
     @Override public synchronized void close() {
         closed = true;
         for (String id : sessions.keySet()) sessions.computeIfPresent(id, (deviceId, session) -> {
-            retire(deviceId, session);
+            retire(deviceId, session, false);
             return null;
         });
     }

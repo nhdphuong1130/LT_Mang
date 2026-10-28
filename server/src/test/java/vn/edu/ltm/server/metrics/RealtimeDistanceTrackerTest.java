@@ -31,6 +31,10 @@ class RealtimeDistanceTrackerTest {
         assertEquals(-1.0, pending.rttMs());
     }
 
+    @Test void failedPingDoesNotProduceSyntheticRttOrTtl() {
+        assertNull(RealtimeDistanceTracker.probeHost("256.256.256.256"));
+    }
+
     @Test
     void usesOnlyServerObservedWifiDirectStationForPhysicalDistance() {
         var pingSample = "64 bytes from 10.35.92.160: icmp_seq=1 ttl=128 time=12.4 ms";
@@ -97,5 +101,27 @@ class RealtimeDistanceTrackerTest {
 
         assertTrue(probe.hasPhysicalDistance());
         assertEquals(DirectLinkStatus.CONNECTED, probe.directLinkStatus());
+    }
+
+    @Test void stopsPublishingPhysicalDistanceAfterDirectRssiExpires() {
+        var time = new AtomicReference<>(Instant.parse("2026-10-24T00:00:00Z"));
+        Clock clock = new Clock() {
+            @Override public ZoneId getZone() { return ZoneOffset.UTC; }
+            @Override public Clock withZone(ZoneId zone) { return this; }
+            @Override public Instant instant() { return time.get(); }
+        };
+        var registry = new DirectLinkRegistry(clock);
+        registry.update("pc-b", DirectLinkIdentity.connected("Direct", "CC:C5:30:08:CF:12", time.get(),
+                "1.1.0", Set.of("WIFI_DIRECT_IDENTITY_V1")));
+        var tracker = new RealtimeDistanceTracker(registry, List::of, clock);
+        tracker.recordStationSamples(List.of(new LinuxP2pStationCollector.StationSample(
+                "p2p-wlp0s20f3-0", "CC:C5:30:08:CF:12", -55, time.get())));
+        assertTrue(tracker.recordProbe("pc-b", 5.0, 128).hasPhysicalDistance());
+
+        time.set(time.get().plusSeconds(31));
+
+        DistanceTelemetry expired = tracker.getOrProbe("pc-b", null, true);
+        assertFalse(expired.hasPhysicalDistance());
+        assertEquals(DirectLinkStatus.STALE_SIGNAL, expired.directLinkStatus());
     }
 }

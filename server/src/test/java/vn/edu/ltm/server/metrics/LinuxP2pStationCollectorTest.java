@@ -4,36 +4,11 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.time.ZoneId;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class LinuxP2pStationCollectorTest {
-    @Test void unchangedCachedScanIsNotRelabelledAsANewRadioSample() {
-        var current = new AtomicReference<>(Instant.parse("2026-10-24T00:00:00Z"));
-        Clock clock = new Clock() {
-            @Override public ZoneId getZone() { return ZoneId.of("UTC"); }
-            @Override public Clock withZone(ZoneId zone) { return this; }
-            @Override public Instant instant() { return current.get(); }
-        };
-        var collector = new LinuxP2pStationCollector(command -> {
-            if (command.equals(List.of("iw", "dev"))) return "";
-            if (command.equals(List.of("nmcli", "-t", "-f", "BSSID,SIGNAL,SSID",
-                    "device", "wifi", "list", "--rescan", "no"))) {
-                return "3A\\:7A\\:0E\\:A8\\:91\\:A7:92:DESKTOP-K5PKS87 9116";
-            }
-            return "";
-        }, clock);
-
-        var first = collector.collect().getFirst();
-        current.set(current.get().plusSeconds(1));
-        var repeated = collector.collect().getFirst();
-
-        assertEquals(first.sampledAt(), repeated.sampledAt());
-    }
-
     @Test void discoversOnlyRealP2pGroupInterfaces() {
         String iw = """
                 phy#0
@@ -43,9 +18,12 @@ class LinuxP2pStationCollectorTest {
                 \t\ttype managed
                 \tInterface p2p-wlp0s20f3-0
                 \t\ttype P2P-GO
+                \tInterface p2p-wlp0s20f3-1
+                \t\ttype P2P-client
                 """;
 
-        assertEquals(List.of("p2p-wlp0s20f3-0"), LinuxP2pStationCollector.parseGroupInterfaces(iw));
+        assertEquals(List.of("p2p-wlp0s20f3-0", "p2p-wlp0s20f3-1"),
+                LinuxP2pStationCollector.parseGroupInterfaces(iw));
     }
 
     @Test void parsesStationMacAndPrefersAverageSignal() {
@@ -65,19 +43,16 @@ class LinuxP2pStationCollectorTest {
         assertEquals(now, samples.getFirst().sampledAt());
     }
 
-    @Test void parsesNmcliWifiDirectListAndCalculatesDbm() {
-        String nmcli = """
-                02\\:FB\\:C2\\:E6\\:39\\:4E:95:Ngan
-                3A\\:7A\\:0E\\:A8\\:91\\:A7:89:DESKTOP-K5PKS87 9116
-                """;
-        Instant now = Instant.parse("2026-10-24T00:00:00Z");
+    @Test void infrastructureWifiScanCannotMasqueradeAsDirectLinkSignal() {
+        var collector = new LinuxP2pStationCollector(command -> {
+            if (command.equals(List.of("iw", "dev"))) return "";
+            if (command.equals(List.of("nmcli", "-t", "-f", "BSSID,SIGNAL,SSID",
+                    "device", "wifi", "list", "--rescan", "no"))) {
+                return "02\\:FB\\:C2\\:E6\\:39\\:4E:95:Ngan";
+            }
+            return "";
+        }, Clock.systemUTC());
 
-        var samples = LinuxP2pStationCollector.parseNmcliWifiDirectList(nmcli, now);
-
-        assertEquals(2, samples.size());
-        assertEquals("3A:7A:0E:A8:91:A7", samples.get(1).stationMac());
-        assertEquals(-55.5, samples.get(1).rssiDbm());
-        assertEquals("p2p-wlp0s20f3-0", samples.get(1).interfaceName());
-        assertEquals(now, samples.get(1).sampledAt());
+        assertTrue(collector.collect().isEmpty());
     }
 }

@@ -28,6 +28,7 @@ public final class FileTransferServer implements AutoCloseable {
     private final FileUploadHandler.TempOutputFactory outputFactory;
     private final Consumer<Socket> handlerOverride;
     private final Duration closeWait;
+    private final vn.edu.ltm.server.audit.AuditLogRepository auditLogs;
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
     private final Set<Socket> sockets = ConcurrentHashMap.newKeySet();
     private ServerSocket listener;
@@ -51,20 +52,27 @@ public final class FileTransferServer implements AutoCloseable {
         this(bindAddress, port, provisioning, backups, restores, FileUploadHandler.diskOutput());
     }
 
+    public FileTransferServer(String bindAddress, int port, DeviceProvisioningService provisioning,
+                              BackupService backups, RestoreService restores,
+                              vn.edu.ltm.server.audit.AuditLogRepository auditLogs) {
+        this(bindAddress, port, provisioning, backups, restores, FileUploadHandler.diskOutput(), null, Duration.ofSeconds(3), auditLogs);
+    }
+
     private FileTransferServer(String bindAddress, int port, DeviceProvisioningService provisioning,
                               BackupService backups, RestoreService restores,
                               FileUploadHandler.TempOutputFactory outputFactory) {
-        this(bindAddress, port, provisioning, backups, restores, outputFactory, null, Duration.ofSeconds(3));
+        this(bindAddress, port, provisioning, backups, restores, outputFactory, null, Duration.ofSeconds(3), null);
     }
 
     FileTransferServer(String bindAddress, int port, Duration closeWait, Consumer<Socket> handlerOverride) {
-        this(bindAddress, port, null, null, null, null, handlerOverride, closeWait);
+        this(bindAddress, port, null, null, null, null, handlerOverride, closeWait, null);
     }
 
     private FileTransferServer(String bindAddress, int port, DeviceProvisioningService provisioning,
                                BackupService backups, RestoreService restores,
                                FileUploadHandler.TempOutputFactory outputFactory,
-                               Consumer<Socket> handlerOverride, Duration closeWait) {
+                               Consumer<Socket> handlerOverride, Duration closeWait,
+                               vn.edu.ltm.server.audit.AuditLogRepository auditLogs) {
         this.bindAddress = bindAddress;
         this.requestedPort = port;
         this.provisioning = provisioning;
@@ -73,6 +81,7 @@ public final class FileTransferServer implements AutoCloseable {
         this.outputFactory = outputFactory;
         this.handlerOverride = handlerOverride;
         this.closeWait = closeWait;
+        this.auditLogs = auditLogs;
     }
 
     public synchronized void start() throws IOException {
@@ -103,9 +112,9 @@ public final class FileTransferServer implements AutoCloseable {
                         var codec = new FileTransferCodec();
                         var header = codec.readHeader(socket.getInputStream());
                         if (header.operation() == FileOperation.BACKUP_UPLOAD)
-                            new FileUploadHandler(socket, provisioning, backups, outputFactory, header).run();
+                            new FileUploadHandler(socket, provisioning, backups, outputFactory, header, auditLogs).run();
                         else if (header.operation() == FileOperation.RESTORE_DOWNLOAD && restores != null)
-                            new FileRestoreHandler(socket, header, provisioning, restores).run();
+                            new FileRestoreHandler(socket, header, provisioning, restores, auditLogs).run();
                         else {
                             codec.writeResult(socket.getOutputStream(),
                                     new TransferResult(TransferResult.Status.REJECTED, "Unsupported operation"));

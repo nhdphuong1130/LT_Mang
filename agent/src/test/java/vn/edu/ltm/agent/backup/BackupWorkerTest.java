@@ -20,6 +20,22 @@ class BackupWorkerTest {
     @TempDir Path root;
     private static final Instant NOW = Instant.parse("2026-01-01T00:00:00Z");
 
+    @Test void notificationFailureCannotTurnSuccessfulUploadIntoRetry() throws Exception {
+        Path protectedRoot = Files.createDirectory(root.resolve("protected-notification"));
+        Path source = protectedRoot.resolve("file.txt");
+        Files.writeString(source, "stored");
+        var queue = queue();
+        queue.enqueueOrUpdate(candidate(source, "file.txt"));
+        var worker = new BackupWorker(queue,
+                item -> new TransferResult(TransferResult.Status.STORED, "Stored"),
+                protectedRoot, Clock.fixed(NOW, ZoneOffset.UTC),
+                ignored -> { throw new IllegalStateException("UI unavailable"); });
+
+        worker.runOnce();
+
+        assertTrue(queue.nextReady(1).isEmpty());
+    }
+
     @Test void acknowledgesOnlyClaimedChecksumWhenQueuedFileChangesDuringUpload() throws Exception {
         Path protectedRoot = Files.createDirectory(root.resolve("protected"));
         Path source = protectedRoot.resolve("file.txt");
