@@ -46,6 +46,15 @@ public static class PairingPolicy
         result is "Paired" or "AlreadyPaired";
 }
 
+public static class AdvertisementStartup
+{
+    public static void Run(Action armListener, Action startPublisher)
+    {
+        armListener();
+        startPublisher();
+    }
+}
+
 public static class Program
 {
     public static async Task<int> Main(string[] args)
@@ -124,63 +133,66 @@ public static class Program
             publisher.Advertisement.IsAutonomousGroupOwnerEnabled = false;
             AttachPublisherDiagnostics(publisher);
             Emit(DirectLinkState.PublisherStarting());
-            publisher.Start();
 
             var listener = new WiFiDirectConnectionListener();
             var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             WiFiDirectDevice? activeDevice = null;
 
-            listener.ConnectionRequested += async (sender, args) => {
-                try {
-                    WiFiDirectConnectionRequest request = args.GetConnectionRequest();
-                    var device = request.DeviceInformation;
-                    Emit(DirectLinkState.ConnectionRequested(device.Name, device.Id));
+            AdvertisementStartup.Run(
+                armListener: () => {
+                    listener.ConnectionRequested += async (sender, args) => {
+                        try {
+                            WiFiDirectConnectionRequest request = args.GetConnectionRequest();
+                            var device = request.DeviceInformation;
+                            Emit(DirectLinkState.ConnectionRequested(device.Name, device.Id));
 
-                    if (device.Pairing.CanPair && !device.Pairing.IsPaired) {
-                        var custom = device.Pairing.Custom;
-                        custom.PairingRequested += (pairingSender, pairingArgs) => {
-                            Emit(DirectLinkState.PairingStarted(device.Name, device.Id,
-                                pairingArgs.PairingKind.ToString()));
-                            pairingArgs.Accept();
-                        };
-                        Emit(DirectLinkState.PairingStarted(device.Name, device.Id,
-                            "ConfirmOnly|ProvidePin|DisplayPin"));
-                        DevicePairingResult pairing = await custom.PairAsync(
-                            DevicePairingKinds.ConfirmOnly | DevicePairingKinds.ProvidePin | DevicePairingKinds.DisplayPin,
-                            DevicePairingProtectionLevel.None);
-                        string pairingStatus = pairing.Status.ToString();
-                        if (!PairingPolicy.MayOpenDevice(pairingStatus)) {
-                            Emit(DirectLinkState.PairingFailed(device.Name, device.Id, pairingStatus));
-                            return;
-                        }
-                        Emit(DirectLinkState.PairingSucceeded(device.Name, device.Id, pairingStatus));
-                    } else if (device.Pairing.IsPaired) {
-                        Emit(DirectLinkState.PairingSucceeded(device.Name, device.Id, "AlreadyPaired"));
-                    } else {
-                        Emit(DirectLinkState.PairingFailed(device.Name, device.Id, "PairingUnavailable"));
-                        return;
-                    }
+                            if (device.Pairing.CanPair && !device.Pairing.IsPaired) {
+                                var custom = device.Pairing.Custom;
+                                custom.PairingRequested += (pairingSender, pairingArgs) => {
+                                    Emit(DirectLinkState.PairingStarted(device.Name, device.Id,
+                                        pairingArgs.PairingKind.ToString()));
+                                    pairingArgs.Accept();
+                                };
+                                Emit(DirectLinkState.PairingStarted(device.Name, device.Id,
+                                    "ConfirmOnly|ProvidePin|DisplayPin"));
+                                DevicePairingResult pairing = await custom.PairAsync(
+                                    DevicePairingKinds.ConfirmOnly | DevicePairingKinds.ProvidePin | DevicePairingKinds.DisplayPin,
+                                    DevicePairingProtectionLevel.None);
+                                string pairingStatus = pairing.Status.ToString();
+                                if (!PairingPolicy.MayOpenDevice(pairingStatus)) {
+                                    Emit(DirectLinkState.PairingFailed(device.Name, device.Id, pairingStatus));
+                                    return;
+                                }
+                                Emit(DirectLinkState.PairingSucceeded(device.Name, device.Id, pairingStatus));
+                            } else if (device.Pairing.IsPaired) {
+                                Emit(DirectLinkState.PairingSucceeded(device.Name, device.Id, "AlreadyPaired"));
+                            } else {
+                                Emit(DirectLinkState.PairingFailed(device.Name, device.Id, "PairingUnavailable"));
+                                return;
+                            }
 
-                    var parameters = new WiFiDirectConnectionParameters { GroupOwnerIntent = 0 };
-                    Emit(DirectLinkState.OpeningDevice(device.Name, device.Id));
-                    activeDevice = await WiFiDirectDevice.FromIdAsync(device.Id, parameters);
-                    if (activeDevice == null) {
-                        Emit(DirectLinkState.Unavailable(device.Name,
-                            "Windows returned no Wi-Fi Direct device after pairing"));
-                        return;
-                    }
-                    Emit(DirectLinkState.Connected(device.Name, device.Id));
-                    activeDevice.ConnectionStatusChanged += (_, _) => {
-                        if (activeDevice.ConnectionStatus == WiFiDirectConnectionStatus.Connected) {
+                            var parameters = new WiFiDirectConnectionParameters { GroupOwnerIntent = 0 };
+                            Emit(DirectLinkState.OpeningDevice(device.Name, device.Id));
+                            activeDevice = await WiFiDirectDevice.FromIdAsync(device.Id, parameters);
+                            if (activeDevice == null) {
+                                Emit(DirectLinkState.Unavailable(device.Name,
+                                    "Windows returned no Wi-Fi Direct device after pairing"));
+                                return;
+                            }
                             Emit(DirectLinkState.Connected(device.Name, device.Id));
-                        } else {
-                            Emit(DirectLinkState.Disconnected(device.Name, device.Id));
+                            activeDevice.ConnectionStatusChanged += (_, _) => {
+                                if (activeDevice.ConnectionStatus == WiFiDirectConnectionStatus.Connected) {
+                                    Emit(DirectLinkState.Connected(device.Name, device.Id));
+                                } else {
+                                    Emit(DirectLinkState.Disconnected(device.Name, device.Id));
+                                }
+                            };
+                        } catch (Exception ex) {
+                            Emit(DirectLinkState.Unavailable("", ex.GetType().Name + ": Connection error: " + ex.Message));
                         }
                     };
-                } catch (Exception ex) {
-                    Emit(DirectLinkState.Unavailable("", ex.GetType().Name + ": Connection error: " + ex.Message));
-                }
-            };
+                },
+                startPublisher: publisher.Start);
 
             Console.CancelKeyPress += (_, eventArgs) => {
                 eventArgs.Cancel = true;

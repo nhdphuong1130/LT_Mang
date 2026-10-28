@@ -72,6 +72,18 @@ public sealed class DirectLinkStateTests
         Assert.Equal("id", state.DeviceId);
     }
 
+    [Fact]
+    public void AdvertisementStartupArmsListenerBeforePublisherStarts()
+    {
+        var lifecycle = new List<string>();
+
+        AdvertisementStartup.Run(
+            armListener: () => lifecycle.Add("listener"),
+            startPublisher: () => lifecycle.Add("publisher"));
+
+        Assert.Equal(["listener", "publisher"], lifecycle);
+    }
+
     [Theory]
     [InlineData("Paired", true)]
     [InlineData("AlreadyPaired", true)]
