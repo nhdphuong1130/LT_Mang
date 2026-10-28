@@ -51,7 +51,15 @@ case "$*" in
   "-t -f GENERAL.CONNECTION device show wlp0s20f3") echo "GENERAL.CONNECTION:Ngan" ;;
   "-t -f IP4.ADDRESS device show wlp0s20f3") echo "IP4.ADDRESS[1]:192.168.1.33/24" ;;
   "-t -f DEVICE,TYPE device status") echo "p2p-dev-wlp0s20f3:wifi-p2p" ;;
-  "-t -f NAME connection show") : ;;
+  "-t -f NAME connection show")
+    if [[ ${LTM_TEST_PROFILE_EXISTS:-0} == 1 ]]; then
+      echo "ltm-wifi-direct-distance"
+    fi
+    ;;
+  "-g connection.type,wifi-p2p.peer connection show ltm-wifi-direct-distance")
+    printf "%s\n%s\n" "${LTM_TEST_PROFILE_TYPE:-wifi-p2p}" \
+      "${LTM_TEST_PROFILE_PEER:-38:7A:0E:A8:91:A8}"
+    ;;
   "connection add "*) echo "Connection added" ;;
   "connection up "*) echo "Connection activated" ;;
 esac'
@@ -134,5 +142,28 @@ if env "${common_env[@]}" LTM_TEST_FAIL_WPA_KEY=device_type \
 fi
 assert_contains "$failure_output" 'Failed to configure WPS device_type'
 assert_not_contains "$events" 'nmcli|connection|add'
+
+: >"$events"
+reconnect_output="$test_root/reconnect.out"
+if ! env "${common_env[@]}" LTM_TEST_PROFILE_EXISTS=1 \
+  "$script" wlp0s20f3 38:7A:0E:A8:91:A8 --apply >"$reconnect_output" 2>&1; then
+  cat "$reconnect_output" >&2
+  fail "Expected an existing matching profile to be reused"
+fi
+assert_contains "$reconnect_output" 'Reusing existing Wi-Fi Direct profile: ltm-wifi-direct-distance'
+assert_contains "$events" 'nmcli|connection|up|ltm-wifi-direct-distance'
+assert_not_contains "$events" 'nmcli|connection|add|type|wifi-p2p'
+assert_not_contains "$events" 'nmcli|connection|delete|ltm-wifi-direct-distance'
+
+: >"$events"
+mismatch_output="$test_root/mismatch.out"
+if env "${common_env[@]}" LTM_TEST_PROFILE_EXISTS=1 \
+  LTM_TEST_PROFILE_PEER=AA:BB:CC:DD:EE:FF \
+  "$script" wlp0s20f3 38:7A:0E:A8:91:A8 --apply >"$mismatch_output" 2>&1; then
+  fail "Expected a profile for a different peer to be rejected"
+fi
+assert_contains "$mismatch_output" \
+  'existing profile ltm-wifi-direct-distance does not match wifi-p2p peer 38:7A:0E:A8:91:A8'
+assert_not_contains "$events" 'nmcli|connection|up|ltm-wifi-direct-distance'
 
 echo "PASS: setup-wifi-direct-server dynamic bootstrap"

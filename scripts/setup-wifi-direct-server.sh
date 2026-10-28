@@ -129,14 +129,28 @@ fi
 
 rollback() {
   nmcli connection down "$profile_name" >/dev/null 2>&1 || true
-  nmcli connection delete "$profile_name" >/dev/null 2>&1 || true
+  if (( created_profile )); then
+    nmcli connection delete "$profile_name" >/dev/null 2>&1 || true
+  fi
   nmcli connection up "$lan_connection" >/dev/null 2>&1 || true
 }
+created_profile=0
 trap 'echo "Setup failed; rolling back only $profile_name" >&2; rollback' ERR
 
 if nmcli -t -f NAME connection show | grep -Fxq "$profile_name"; then
-  echo "Abort: profile already exists: $profile_name" >&2
-  exit 1
+  mapfile -t existing_profile < <(
+    nmcli -g connection.type,wifi-p2p.peer connection show "$profile_name"
+  )
+  existing_type=${existing_profile[0]:-}
+  existing_peer=${existing_profile[1]:-}
+  if [[ $existing_type != wifi-p2p || ${existing_peer^^} != "$peer_mac" ]]; then
+    echo "Abort: existing profile $profile_name does not match wifi-p2p peer $peer_mac" >&2
+    exit 1
+  fi
+  echo "Reusing existing Wi-Fi Direct profile: $profile_name"
+else
+  nmcli connection add type wifi-p2p con-name "$profile_name" peer "$peer_mac" connection.autoconnect no
+  created_profile=1
 fi
 
 p2p_path=$(busctl call org.freedesktop.NetworkManager /org/freedesktop/NetworkManager org.freedesktop.NetworkManager GetDeviceByIpIface "s" "$p2p_device" 2>/dev/null | awk '{print $2}' | tr -d '"' || true)
@@ -146,7 +160,6 @@ if [[ -n "$p2p_path" && "$p2p_path" != "/" ]]; then
   sleep 3
 fi
 
-nmcli connection add type wifi-p2p con-name "$profile_name" peer "$peer_mac" connection.autoconnect no
 nmcli connection up "$profile_name"
 
 new_state=$(nmcli -t -f GENERAL.STATE device show "$physical_iface" | cut -d: -f2- || true)
