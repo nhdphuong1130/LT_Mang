@@ -60,6 +60,14 @@ if nmcli -t -f NAME connection show | grep -Fxq "$profile_name"; then
   echo "Abort: profile already exists: $profile_name" >&2
   exit 1
 fi
+
+p2p_path=$(busctl call org.freedesktop.NetworkManager /org/freedesktop/NetworkManager org.freedesktop.NetworkManager GetDeviceByIpIface "s" "$p2p_device" 2>/dev/null | awk '{print $2}' | tr -d '"' || true)
+if [[ -n "$p2p_path" && "$p2p_path" != "/" ]]; then
+  echo "Triggering Wi-Fi Direct discovery on $p2p_device..."
+  busctl call org.freedesktop.NetworkManager "$p2p_path" org.freedesktop.NetworkManager.Device.WifiP2P StartFind "a{sv}" 0 >/dev/null 2>&1 || true
+  sleep 3
+fi
+
 nmcli connection add type wifi-p2p con-name "$profile_name" peer "$peer_mac" connection.autoconnect no
 nmcli connection up "$profile_name"
 
